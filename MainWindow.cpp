@@ -4,6 +4,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QImage>
+#include <QPixmap>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_processor(new VideoProcessor(this))
@@ -31,9 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_btnStop,      &QPushButton::clicked, this, &MainWindow::onStop);
 
     connect(m_processor, &VideoProcessor::frameReady,
-            this, [this](const cv::Mat &frame) {
-                emit frameReady(frame);
-            });
+            this, &MainWindow::onFrameReady);
     connect(m_processor, &VideoProcessor::finished,
             this, &MainWindow::onStop);
 }
@@ -47,38 +46,21 @@ MainWindow::~MainWindow()
 
 void MainWindow::onFrameReady(const cv::Mat &frame)
 {
-    // Procesa frame (ej: grayscaled, filtro, etc.)
-    cv::Mat processed = matToGrayscale(frame);
+    if (frame.empty()) return;
 
-    // Convierte a QImage para mostrarlo en QLabel
-    QImage img(
-        processed.data,
-        processed.cols, processed.rows,
-        static_cast<int>(processed.step),
-        QImage::Format_Grayscale8
-    );
+    QImage img;
+    if (frame.channels() == 3) {
+        cv::Mat rgb;
+        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+        img = QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGB888).copy();
+    } else if (frame.channels() == 1) {
+        img = QImage(frame.data, frame.cols, frame.rows, static_cast<int>(frame.step), QImage::Format_Grayscale8).copy();
+    } else {
+        return;
+    }
 
     m_videoLabel->setPixmap(QPixmap::fromImage(img).scaled(
         m_videoLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-}
-
-cv::Mat MainWindow::matToGrayscale(const cv::Mat &src)
-{
-    cv::Mat gray;
-    cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
-    return gray;
-}
-
-void MainWindow::onBrowseFile()
-{
-    QString file = QFileDialog::getOpenFileName(
-        this,
-        "Open video file",
-        QDir::homePath(),
-        "Video files (*.mp4 *.avi *.mkv)");
-    if (!file.isEmpty()) {
-        // Guarda el path o pásalo directamente a VideoProcessor
-    }
 }
 
 void MainWindow::onStartFromFile()

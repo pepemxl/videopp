@@ -16,8 +16,6 @@ public:
 
 private slots:
     void onFrameReady(const cv::Mat &frame);
-    void onProcessedFrame(const cv::Mat &frame);
-    void onBrowseFile();
     void onStartFromFile();
     void onStartFromCamera();
     void onStop();
@@ -28,8 +26,6 @@ private:
     QPushButton *m_btnStartCam;
     QPushButton *m_btnStop;
     VideoProcessor *m_processor;
-
-    cv::Mat matToGrayscale(const cv::Mat &src);
 };
 
 #endif

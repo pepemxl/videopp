@@ -62,10 +62,15 @@ void VideoProcessor::run()
         }
 
         // Procesa el frame aquí (por ejemplo OpenCV transformations)
-        // cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
-        // cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
+        cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
+        cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
 
         emit frameReady(frame);
+
+        // Limit frame rate when reading from a file to avoid flooding the UI
+        if (m_sourceType == FromFile) {
+            QThread::msleep(30);
+        }
     }
 
     emit finished();
