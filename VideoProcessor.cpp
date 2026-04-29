@@ -1,8 +1,7 @@
 #include "VideoProcessor.h"
-#include <QMutexLocker>
 
 VideoProcessor::VideoProcessor(QObject *parent)
-    : QThread(parent), m_stopped(false)
+    : QThread(parent)
 {
 }
 
@@ -13,32 +12,14 @@ VideoProcessor::~VideoProcessor()
 
 void VideoProcessor::setSource(const QString &path, SourceType type)
 {
-    QMutexLocker locker(&m_mutex);
-
+    // Caller must stop the worker before changing the source.
     m_sourcePath = path;
-    m_sourceType  = type;
-
-    if (m_stopped) {
-        return;
-    }
-
-    if (m_sourceType == FromCamera) {
-        m_cap.open(0);  // cámara default
-    } else {
-        m_cap.open(m_sourcePath.toStdString());
-    }
-
-    if (!m_cap.isOpened()) {
-        // emit error via Qt signal si quieres
-    }
+    m_sourceType = type;
 }
 
 void VideoProcessor::stopProcessing()
 {
-    m_mutex.lock();
-    m_stopped = true;
-    m_mutex.unlock();
-
+    m_stopped.store(true);
     if (isRunning()) {
         wait();
     }
@@ -46,32 +27,50 @@ void VideoProcessor::stopProcessing()
 
 void VideoProcessor::run()
 {
-    m_stopped = false;
+    m_stopped.store(false);
 
-    while (!m_stopped) {
+    cv::VideoCapture cap;
+    bool opened = false;
+    if (m_sourceType == FromCamera) {
+#ifdef _WIN32
+        // DirectShow tends to be the most reliable default on Windows.
+        opened = cap.open(0, cv::CAP_DSHOW);
+        if (!opened) {
+            opened = cap.open(0, cv::CAP_ANY);
+        }
+#else
+        opened = cap.open(0, cv::CAP_ANY);
+#endif
+    } else {
+        opened = cap.open(m_sourcePath.toStdString());
+    }
+
+    if (!opened || !cap.isOpened()) {
+        emit error(QStringLiteral("Failed to open video source"));
+        emit finished();
+        return;
+    }
+
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    if (fps <= 0.0 || fps > 240.0) fps = 30.0;
+    const int frameDelayMs = static_cast<int>(1000.0 / fps);
+
+    while (!m_stopped.load()) {
         cv::Mat frame;
-        {
-            QMutexLocker locker(&m_mutex);
-            if (!m_cap.read(frame)) {
-                break;  // fin de video o error
-            }
+        if (!cap.read(frame) || frame.empty()) {
+            break;
         }
 
-        if (frame.empty()) {
-            continue;
-        }
-
-        // Procesa el frame aquí (por ejemplo OpenCV transformations)
         cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
         cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
 
         emit frameReady(frame);
 
-        // Limit frame rate when reading from a file to avoid flooding the UI
         if (m_sourceType == FromFile) {
-            QThread::msleep(30);
+            QThread::msleep(frameDelayMs);
         }
     }
 
+    cap.release();
     emit finished();
 }

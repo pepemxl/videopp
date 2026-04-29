@@ -14,14 +14,34 @@ HEADERS += \
     MainWindow.h \
     VideoProcessor.h
 
-# --- OpenCV Configuration ---
-# Note: You will need to configure OpenCV paths for your local system here
-# if you decide to use qmake instead of CMake.
-#
-# For example, on Windows (adjust paths as necessary):
-# INCLUDEPATH += "C:/opencv/build/include"
-# LIBS += -L"C:/opencv/build/x64/vc15/lib" -lopencv_world450
-#
-# On Linux/macOS using pkg-config:
-# unix: CONFIG += link_pkgconfig
-# unix: PKGCONFIG += opencv4
+# --- OpenCV configuration ---
+# Linux / macOS: rely on pkg-config (apt: libopencv-dev, brew: opencv).
+unix {
+    CONFIG += link_pkgconfig
+    PKGCONFIG += opencv4
+}
+
+# Windows: point at your local OpenCV install.
+# Tip: define OPENCV_DIR as an environment variable to avoid editing this file.
+win32 {
+    OPENCV_DIR_ENV = $$(OPENCV_DIR)
+    isEmpty(OPENCV_DIR_ENV) {
+        OPENCV_DIR = "C:/opencv/build"
+    } else {
+        OPENCV_DIR = $$OPENCV_DIR_ENV
+    }
+
+    INCLUDEPATH += "$$OPENCV_DIR/include"
+
+    *-msvc* {
+        LIBS += -L"$$OPENCV_DIR/x64/vc16/lib"
+    } else {
+        LIBS += -L"$$OPENCV_DIR/x64/mingw/lib"
+    }
+
+    CONFIG(debug, debug|release) {
+        LIBS += -lopencv_world490d
+    } else {
+        LIBS += -lopencv_world490
+    }
+}

@@ -35,6 +35,8 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onFrameReady);
     connect(m_processor, &VideoProcessor::finished,
             this, &MainWindow::onStop);
+    connect(m_processor, &VideoProcessor::error,
+            this, &MainWindow::onError);
 }
 
 MainWindow::~MainWindow()
@@ -65,9 +67,12 @@ void MainWindow::onFrameReady(const cv::Mat &frame)
 
 void MainWindow::onStartFromFile()
 {
+    if (m_processor->isRunning()) {
+        m_processor->stopProcessing();
+    }
     QString file = QFileDialog::getOpenFileName(
         this, "Open video file", QDir::homePath(),
-        "Video (*.mp4 *.avi *.mkv)");
+        "Video (*.mp4 *.avi *.mkv *.mov *.webm)");
     if (!file.isEmpty()) {
         m_processor->setSource(file, VideoProcessor::FromFile);
         m_processor->start();
@@ -76,6 +81,9 @@ void MainWindow::onStartFromFile()
 
 void MainWindow::onStartFromCamera()
 {
+    if (m_processor->isRunning()) {
+        m_processor->stopProcessing();
+    }
     m_processor->setSource(QString(), VideoProcessor::FromCamera);
     m_processor->start();
 }
@@ -83,4 +91,9 @@ void MainWindow::onStartFromCamera()
 void MainWindow::onStop()
 {
     m_processor->stopProcessing();
+}
+
+void MainWindow::onError(const QString &message)
+{
+    QMessageBox::warning(this, tr("Video error"), message);
 }

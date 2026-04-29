@@ -19,6 +19,7 @@ private slots:
     void onStartFromFile();
     void onStartFromCamera();
     void onStop();
+    void onError(const QString &message);
 
 private:
     QLabel     *m_videoLabel;

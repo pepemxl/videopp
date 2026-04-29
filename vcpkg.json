@@ -1,0 +1,12 @@
+{
+    "name": "video-processor",
+    "version-string": "0.1.0",
+    "description": "Qt + OpenCV threaded video processor",
+    "dependencies": [
+        {
+            "name": "opencv4",
+            "default-features": false,
+            "features": ["ffmpeg"]
+        }
+    ]
+}
