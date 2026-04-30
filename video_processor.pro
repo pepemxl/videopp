@@ -33,21 +33,12 @@ win32 {
     OPENCV_LIBS = -lopencv_core4 -lopencv_imgproc4 \
                   -lopencv_imgcodecs4 -lopencv_videoio4
 
-    # MSVC appends 'd' to debug lib names; MinGW does not.
-    *-msvc* {
-        CONFIG(debug, debug|release) {
-            LIBS += -L"$$VCPKG_DIR/debug/lib"
-            LIBS += $$replace(OPENCV_LIBS, "4", "4d")
-        } else {
-            LIBS += -L"$$VCPKG_DIR/lib"
-            LIBS += $$OPENCV_LIBS
-        }
+    # vcpkg appends 'd' to debug lib names for both MSVC and MinGW triplets.
+    CONFIG(debug, debug|release) {
+        LIBS += -L"$$VCPKG_DIR/debug/lib"
+        LIBS += $$replace(OPENCV_LIBS, "4", "4d")
     } else {
-        CONFIG(debug, debug|release) {
-            LIBS += -L"$$VCPKG_DIR/debug/lib"
-        } else {
-            LIBS += -L"$$VCPKG_DIR/lib"
-        }
+        LIBS += -L"$$VCPKG_DIR/lib"
         LIBS += $$OPENCV_LIBS
     }
 }

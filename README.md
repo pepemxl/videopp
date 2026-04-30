@@ -2,6 +2,17 @@
 
 A C++ application built with Qt (Qt6 preferred, Qt5 supported) and OpenCV that processes video from a file or webcam by converting it to grayscale and applying a Gaussian blur in a separate worker thread.
 
+## Status
+
+Verified working on Windows with the following toolchain:
+
+| Component | Version / Path |
+| --- | --- |
+| Qt | `C:\Qt\6.11.0\mingw_64` |
+| MinGW | `C:\Qt\Tools\mingw1310_64` (GCC 13.1.0) |
+| OpenCV | 4.12.0 via vcpkg, triplet `x64-mingw-dynamic`, features `[core, ffmpeg]` |
+| Build outputs | `build_qmake/release/video_processor.exe` (qmake) |
+
 ## Prerequisites
 
 - **C++17** compatible compiler (MSVC, MinGW, GCC, or Clang)
@@ -93,9 +104,49 @@ The provided `vcpkg.json` manifest declares the OpenCV dependency, so `vcpkg` wi
 
 3. **Runtime DLLs:** the build runs `windeployqt` automatically to copy the Qt DLLs next to the executable. Make sure the OpenCV DLL (e.g. `opencv_world490.dll` from `C:\opencv\build\x64\vc16\bin`) is either on your `PATH` or copied next to `video_processor.exe`.
 
-### Using qmake instead of CMake
+### Building from Qt Creator (Windows, MinGW + vcpkg)
 
-Open `video_processor.pro` in **Qt Creator**. The file is already set up to use `pkg-config opencv4` on Linux/macOS. On Windows it reads the `OPENCV_DIR` environment variable (defaulting to `C:/opencv/build`); set it before launching Qt Creator, or edit the path directly in the `.pro` file.
+This is the verified flow for Qt Creator with the bundled MinGW kit.
+
+**One-time vcpkg setup** (only needed if `vcpkg_installed/x64-mingw-dynamic/` does not yet exist):
+
+1. Open a terminal where MinGW is on the `PATH` so vcpkg picks it up as the host compiler:
+
+   ```powershell
+   $env:PATH = "C:\Qt\Tools\mingw1310_64\bin;" + $env:PATH
+   ```
+
+2. From the project root, install OpenCV with the MinGW triplet (compiles from source — expect ~1.5–2 hours, dominated by ffmpeg):
+
+   ```powershell
+   .\vcpkg\vcpkg.exe install --triplet x64-mingw-dynamic --host-triplet x64-mingw-dynamic
+   ```
+
+   Output goes to `vcpkg_installed/x64-mingw-dynamic/`. The `.pro` file already points there.
+
+**Open and build in Qt Creator:**
+
+1. **File → Open File or Project…** → select `video_processor.pro`.
+2. Pick the **Desktop Qt 6.x.x MinGW 64-bit** kit when prompted (any matching MinGW kit works; do **not** pick an MSVC kit — the libs were built with MinGW and linking across ABIs will fail).
+3. Hit **Build** (Ctrl+B). The output binary lands in `build-video_processor-Desktop_Qt_…-Release/release/video_processor.exe`.
+
+**Run from Qt Creator:**
+
+The executable depends on Qt, OpenCV, and MinGW runtime DLLs. Either:
+
+- **Easiest** — In **Projects → Run → Run Environment**, prepend these to `PATH`:
+
+  ```
+  D:\SANDBOX\videopp\vcpkg_installed\x64-mingw-dynamic\bin
+  C:\Qt\6.11.0\mingw_64\bin
+  C:\Qt\Tools\mingw1310_64\bin
+  ```
+
+  Qt Creator typically adds the Qt and MinGW paths automatically; only the vcpkg bin entry usually needs to be added.
+
+- **Or** copy the OpenCV DLLs (`vcpkg_installed/x64-mingw-dynamic/bin/*.dll`, ~18 files) next to the .exe and run `windeployqt.exe video_processor.exe` from a Qt-enabled shell to deploy Qt DLLs.
+
+**Linux / macOS:** the `.pro` file uses `pkg-config opencv4` automatically — just open it in Qt Creator and build, no extra setup.
 
 ---
 
