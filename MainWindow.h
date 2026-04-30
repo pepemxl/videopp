@@ -19,14 +19,24 @@ private slots:
     void onStartFromFile();
     void onStartFromCamera();
     void onStop();
+    void onPlayPause();
+    void onSeekForward();
+    void onSeekBackward();
+    void onProcessorFinished();
     void onError(const QString &message);
 
 private:
-    QLabel     *m_videoLabel;
+    void updatePlaybackControls();
+
+    QLabel      *m_videoLabel;
     QPushButton *m_btnStartFile;
     QPushButton *m_btnStartCam;
     QPushButton *m_btnStop;
+    QPushButton *m_btnPlayPause;
+    QPushButton *m_btnBackward;
+    QPushButton *m_btnForward;
     VideoProcessor *m_processor;
+    bool m_isFileSource{false};
 };
 
 #endif

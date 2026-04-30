@@ -1,4 +1,5 @@
 #include "VideoProcessor.h"
+#include <QMutexLocker>
 
 VideoProcessor::VideoProcessor(QObject *parent)
     : QThread(parent)
@@ -20,19 +21,39 @@ void VideoProcessor::setSource(const QString &path, SourceType type)
 void VideoProcessor::requestStop()
 {
     m_stopped.store(true);
+    m_pauseCond.wakeAll();
 }
 
 void VideoProcessor::stopProcessing()
 {
     m_stopped.store(true);
+    m_pauseCond.wakeAll();
     if (isRunning()) {
         wait();
     }
 }
 
+void VideoProcessor::setPaused(bool paused)
+{
+    m_paused.store(paused);
+    if (!paused) {
+        m_pauseCond.wakeAll();
+    }
+}
+
+void VideoProcessor::seekRelativeSeconds(double seconds)
+{
+    // Accumulate so multiple rapid clicks before the worker consumes the request all apply.
+    double prev = m_seekRequestSec.load();
+    while (!m_seekRequestSec.compare_exchange_weak(prev, prev + seconds)) {}
+    m_pauseCond.wakeAll();  // wake the worker if paused so the seek shows immediately
+}
+
 void VideoProcessor::run()
 {
     m_stopped.store(false);
+    m_paused.store(false);
+    m_seekRequestSec.store(0.0);
 
     cv::VideoCapture cap;
     bool opened = false;
@@ -61,6 +82,19 @@ void VideoProcessor::run()
     const int frameDelayMs = static_cast<int>(1000.0 / fps);
 
     while (!m_stopped.load()) {
+        // Apply pending seek (file only — cameras can't seek).
+        if (m_sourceType == FromFile) {
+            double seekSec = m_seekRequestSec.exchange(0.0);
+            if (seekSec != 0.0) {
+                double cur    = cap.get(cv::CAP_PROP_POS_FRAMES);
+                double total  = cap.get(cv::CAP_PROP_FRAME_COUNT);
+                double target = cur + seekSec * fps;
+                if (target < 0.0) target = 0.0;
+                if (total > 0.0 && target >= total) target = total - 1.0;
+                cap.set(cv::CAP_PROP_POS_FRAMES, target);
+            }
+        }
+
         cv::Mat frame;
         if (!cap.read(frame) || frame.empty()) {
             break;
@@ -72,7 +106,18 @@ void VideoProcessor::run()
         emit frameReady(frame);
 
         if (m_sourceType == FromFile) {
-            QThread::msleep(frameDelayMs);
+            // If paused, block until resumed, stopped, or a seek is requested.
+            // Pause is checked AFTER emitting so a seek-while-paused shows the new frame.
+            if (m_paused.load()) {
+                QMutexLocker lock(&m_pauseMutex);
+                while (m_paused.load()
+                       && !m_stopped.load()
+                       && m_seekRequestSec.load() == 0.0) {
+                    m_pauseCond.wait(&m_pauseMutex);
+                }
+            } else {
+                QThread::msleep(frameDelayMs);
+            }
         }
     }
 
