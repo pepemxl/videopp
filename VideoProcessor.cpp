@@ -17,6 +17,11 @@ void VideoProcessor::setSource(const QString &path, SourceType type)
     m_sourceType = type;
 }
 
+void VideoProcessor::requestStop()
+{
+    m_stopped.store(true);
+}
+
 void VideoProcessor::stopProcessing()
 {
     m_stopped.store(true);

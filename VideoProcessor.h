@@ -22,6 +22,7 @@ public:
 
     void setSource(const QString &path, SourceType type);
     void stopProcessing();
+    void requestStop();
 
 signals:
     void frameReady(const cv::Mat &frame);

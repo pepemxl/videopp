@@ -21,27 +21,33 @@ unix {
     PKGCONFIG += opencv4
 }
 
-# Windows: point at your local OpenCV install.
-# Tip: define OPENCV_DIR as an environment variable to avoid editing this file.
+# Windows: vcpkg-installed OpenCV (x64-windows triplet).
+# vcpkg is expected to live inside the project directory.
 win32 {
-    OPENCV_DIR_ENV = $$(OPENCV_DIR)
-    isEmpty(OPENCV_DIR_ENV) {
-        OPENCV_DIR = "C:/opencv/build"
-    } else {
-        OPENCV_DIR = $$OPENCV_DIR_ENV
-    }
+    # Manifest mode: vcpkg installs into <project>/vcpkg_installed/<triplet>/.
+    VCPKG_DIR = $$PWD/vcpkg_installed/x64-mingw-dynamic
 
-    INCLUDEPATH += "$$OPENCV_DIR/include"
+    INCLUDEPATH += "$$VCPKG_DIR/include/opencv4"
 
+    # Match the modules actually built by vcpkg (opencv4[core,ffmpeg]).
+    OPENCV_LIBS = -lopencv_core4 -lopencv_imgproc4 \
+                  -lopencv_imgcodecs4 -lopencv_videoio4
+
+    # MSVC appends 'd' to debug lib names; MinGW does not.
     *-msvc* {
-        LIBS += -L"$$OPENCV_DIR/x64/vc16/lib"
+        CONFIG(debug, debug|release) {
+            LIBS += -L"$$VCPKG_DIR/debug/lib"
+            LIBS += $$replace(OPENCV_LIBS, "4", "4d")
+        } else {
+            LIBS += -L"$$VCPKG_DIR/lib"
+            LIBS += $$OPENCV_LIBS
+        }
     } else {
-        LIBS += -L"$$OPENCV_DIR/x64/mingw/lib"
-    }
-
-    CONFIG(debug, debug|release) {
-        LIBS += -lopencv_world490d
-    } else {
-        LIBS += -lopencv_world490
+        CONFIG(debug, debug|release) {
+            LIBS += -L"$$VCPKG_DIR/debug/lib"
+        } else {
+            LIBS += -L"$$VCPKG_DIR/lib"
+        }
+        LIBS += $$OPENCV_LIBS
     }
 }

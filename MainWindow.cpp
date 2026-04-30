@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include <QDir>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QVBoxLayout>
@@ -90,7 +91,7 @@ void MainWindow::onStartFromCamera()
 
 void MainWindow::onStop()
 {
-    m_processor->stopProcessing();
+    m_processor->requestStop();
 }
 
 void MainWindow::onError(const QString &message)
