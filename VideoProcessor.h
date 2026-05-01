@@ -30,6 +30,12 @@ public:
     void setPaused(bool paused);
     bool isPaused() const { return m_paused.load(); }
     void seekRelativeSeconds(double seconds);
+    void seekToSeconds(double seconds);
+
+    // Recording (writes filtered frames to disk while playback runs).
+    void requestStartRecording(const QString &outputPath);
+    void requestStopRecording();
+    bool isRecording() const { return m_recording.load(); }
 
     // Playback speed (1.0 = normal). Clamped to [0.1, 8.0].
     void setSpeed(double speed);
@@ -49,6 +55,9 @@ signals:
     void frameReady(const cv::Mat &frame);
     void error(const QString &message);
     void finished();
+    void durationChanged(double seconds);   // 0 if unknown (e.g. camera/live)
+    void positionChanged(double seconds);
+    void recordingChanged(bool recording);
 
 protected:
     void run() override;
@@ -61,11 +70,18 @@ private:
     std::atomic<bool>   m_grayscale{false};
     std::atomic<bool>   m_blur{false};
     std::atomic<double> m_seekRequestSec{0.0};
+    std::atomic<double> m_seekAbsSec{-1.0};   // -1 = no absolute seek pending
     std::atomic<double> m_speed{1.0};
     std::atomic<double> m_startSec{0.0};
     std::atomic<double> m_currentSec{0.0};
     QMutex              m_pauseMutex;
     QWaitCondition      m_pauseCond;
+
+    std::atomic<bool>   m_recordStartRequested{false};
+    std::atomic<bool>   m_recordStopRequested{false};
+    std::atomic<bool>   m_recording{false};
+    QMutex              m_recordPathMutex;
+    QString             m_pendingRecPath;
 };
 
 #endif

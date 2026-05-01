@@ -1,4 +1,5 @@
 #include "VideoProcessor.h"
+#include <QFileInfo>
 #include <QMutexLocker>
 
 VideoProcessor::VideoProcessor(QObject *parent)
@@ -56,11 +57,38 @@ void VideoProcessor::setSpeed(double speed)
     m_speed.store(speed);
 }
 
+void VideoProcessor::seekToSeconds(double seconds)
+{
+    if (seconds < 0.0) seconds = 0.0;
+    m_seekAbsSec.store(seconds);
+    m_pauseCond.wakeAll();
+}
+
+void VideoProcessor::requestStartRecording(const QString &outputPath)
+{
+    {
+        QMutexLocker lock(&m_recordPathMutex);
+        m_pendingRecPath = outputPath;
+    }
+    m_recordStartRequested.store(true);
+    m_pauseCond.wakeAll();
+}
+
+void VideoProcessor::requestStopRecording()
+{
+    m_recordStopRequested.store(true);
+    m_pauseCond.wakeAll();
+}
+
 void VideoProcessor::run()
 {
     m_stopped.store(false);
     m_paused.store(false);
     m_seekRequestSec.store(0.0);
+    m_seekAbsSec.store(-1.0);
+    m_recordStartRequested.store(false);
+    m_recordStopRequested.store(false);
+    m_recording.store(false);
 
     cv::VideoCapture cap;
     bool opened = false;
@@ -88,6 +116,14 @@ void VideoProcessor::run()
     if (fps <= 0.0 || fps > 240.0) fps = 30.0;
     const double baseFrameDelayMs = 1000.0 / fps;
 
+    // Emit total duration for file sources (0 if unknown).
+    double durationSec = 0.0;
+    if (m_sourceType == FromFile) {
+        const double total = cap.get(cv::CAP_PROP_FRAME_COUNT);
+        if (total > 0.0 && fps > 0.0) durationSec = total / fps;
+    }
+    emit durationChanged(durationSec);
+
     // Honor a requested start position (file only).
     if (m_sourceType == FromFile) {
         double startSec = m_startSec.exchange(0.0);
@@ -96,9 +132,17 @@ void VideoProcessor::run()
         }
     }
 
+    cv::VideoWriter writer;
+    cv::Size writerSize;
+    double recordWriteAccum = 0.0;  // fractional writes-per-frame accumulator
+
     while (!m_stopped.load()) {
-        // Apply pending seek (file only — cameras can't seek).
+        // Apply pending seek requests (file only — cameras can't seek).
         if (m_sourceType == FromFile) {
+            double absSec = m_seekAbsSec.exchange(-1.0);
+            if (absSec >= 0.0) {
+                cap.set(cv::CAP_PROP_POS_MSEC, absSec * 1000.0);
+            }
             double seekSec = m_seekRequestSec.exchange(0.0);
             if (seekSec != 0.0) {
                 double cur    = cap.get(cv::CAP_PROP_POS_FRAMES);
@@ -127,7 +171,55 @@ void VideoProcessor::run()
             cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
         }
 
+        // ----- Recording -----
+        if (m_recordStartRequested.exchange(false) && !writer.isOpened()) {
+            QString path;
+            {
+                QMutexLocker lock(&m_recordPathMutex);
+                path = m_pendingRecPath;
+            }
+            const QString ext = QFileInfo(path).suffix().toLower();
+            int fourcc = cv::VideoWriter::fourcc('M','J','P','G');
+            if (ext == "mp4" || ext == "m4v" || ext == "mov" || ext == "mkv") {
+                fourcc = cv::VideoWriter::fourcc('m','p','4','v');
+            }
+            writerSize = cv::Size(frame.cols, frame.rows);
+            recordWriteAccum = 0.0;
+            if (writer.open(path.toStdString(), fourcc, fps, writerSize, true)) {
+                m_recording.store(true);
+                emit recordingChanged(true);
+            } else {
+                emit error(QStringLiteral("Failed to open video writer for: %1").arg(path));
+            }
+        }
+        if (m_recordStopRequested.exchange(false) && writer.isOpened()) {
+            writer.release();
+            m_recording.store(false);
+            emit recordingChanged(false);
+        }
+        if (writer.isOpened()) {
+            cv::Mat out;
+            if (frame.channels() == 1) {
+                cv::cvtColor(frame, out, cv::COLOR_GRAY2BGR);
+            } else {
+                out = frame;
+            }
+            if (out.size() == writerSize) {
+                // Speed-aware duplication: at 0.5x write each frame ~2x to preserve
+                // slow motion; at 2x write every other frame to preserve speed-up.
+                const double speed = m_speed.load();
+                const double writesPerFrame = (speed > 0.0) ? (1.0 / speed) : 1.0;
+                recordWriteAccum += writesPerFrame;
+                int writes = static_cast<int>(recordWriteAccum);
+                recordWriteAccum -= writes;
+                for (int i = 0; i < writes; ++i) {
+                    writer.write(out);
+                }
+            }
+        }
+
         emit frameReady(frame);
+        emit positionChanged(m_currentSec.load());
 
         if (m_sourceType == FromFile) {
             // If paused, block until resumed, stopped, or a seek is requested.
@@ -136,7 +228,8 @@ void VideoProcessor::run()
                 QMutexLocker lock(&m_pauseMutex);
                 while (m_paused.load()
                        && !m_stopped.load()
-                       && m_seekRequestSec.load() == 0.0) {
+                       && m_seekRequestSec.load() == 0.0
+                       && m_seekAbsSec.load() < 0.0) {
                     m_pauseCond.wait(&m_pauseMutex);
                 }
             } else {
@@ -146,6 +239,12 @@ void VideoProcessor::run()
                 QThread::msleep(delay);
             }
         }
+    }
+
+    if (writer.isOpened()) {
+        writer.release();
+        m_recording.store(false);
+        emit recordingChanged(false);
     }
 
     cap.release();
