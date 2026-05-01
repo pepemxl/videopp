@@ -49,6 +49,13 @@ void VideoProcessor::seekRelativeSeconds(double seconds)
     m_pauseCond.wakeAll();  // wake the worker if paused so the seek shows immediately
 }
 
+void VideoProcessor::setSpeed(double speed)
+{
+    if (speed < 0.1) speed = 0.1;
+    if (speed > 8.0) speed = 8.0;
+    m_speed.store(speed);
+}
+
 void VideoProcessor::run()
 {
     m_stopped.store(false);
@@ -79,7 +86,15 @@ void VideoProcessor::run()
 
     double fps = cap.get(cv::CAP_PROP_FPS);
     if (fps <= 0.0 || fps > 240.0) fps = 30.0;
-    const int frameDelayMs = static_cast<int>(1000.0 / fps);
+    const double baseFrameDelayMs = 1000.0 / fps;
+
+    // Honor a requested start position (file only).
+    if (m_sourceType == FromFile) {
+        double startSec = m_startSec.exchange(0.0);
+        if (startSec > 0.0) {
+            cap.set(cv::CAP_PROP_POS_MSEC, startSec * 1000.0);
+        }
+    }
 
     while (!m_stopped.load()) {
         // Apply pending seek (file only — cameras can't seek).
@@ -100,8 +115,17 @@ void VideoProcessor::run()
             break;
         }
 
-        cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
-        cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
+        if (m_sourceType == FromFile) {
+            const double posMs = cap.get(cv::CAP_PROP_POS_MSEC);
+            if (posMs >= 0.0) m_currentSec.store(posMs / 1000.0);
+        }
+
+        if (m_grayscale.load()) {
+            cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
+        }
+        if (m_blur.load()) {
+            cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
+        }
 
         emit frameReady(frame);
 
@@ -116,7 +140,10 @@ void VideoProcessor::run()
                     m_pauseCond.wait(&m_pauseMutex);
                 }
             } else {
-                QThread::msleep(frameDelayMs);
+                const double s = m_speed.load();
+                int delay = static_cast<int>(baseFrameDelayMs / (s > 0.0 ? s : 1.0));
+                if (delay < 1) delay = 1;
+                QThread::msleep(delay);
             }
         }
     }

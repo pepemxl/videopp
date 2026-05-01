@@ -31,6 +31,20 @@ public:
     bool isPaused() const { return m_paused.load(); }
     void seekRelativeSeconds(double seconds);
 
+    // Playback speed (1.0 = normal). Clamped to [0.1, 8.0].
+    void setSpeed(double speed);
+    double speed() const { return m_speed.load(); }
+
+    // Where to start the next run() (file sources only). 0 = beginning.
+    void setStartPositionSec(double sec) { m_startSec.store(sec); }
+    double currentPositionSec() const { return m_currentSec.load(); }
+
+    // Filter toggles — applied per-frame inside run().
+    void setGrayscaleEnabled(bool enabled) { m_grayscale.store(enabled); }
+    void setBlurEnabled(bool enabled)      { m_blur.store(enabled); }
+    bool isGrayscaleEnabled() const { return m_grayscale.load(); }
+    bool isBlurEnabled() const      { return m_blur.load(); }
+
 signals:
     void frameReady(const cv::Mat &frame);
     void error(const QString &message);
@@ -44,7 +58,12 @@ private:
     SourceType          m_sourceType{FromCamera};
     std::atomic<bool>   m_stopped{false};
     std::atomic<bool>   m_paused{false};
+    std::atomic<bool>   m_grayscale{false};
+    std::atomic<bool>   m_blur{false};
     std::atomic<double> m_seekRequestSec{0.0};
+    std::atomic<double> m_speed{1.0};
+    std::atomic<double> m_startSec{0.0};
+    std::atomic<double> m_currentSec{0.0};
     QMutex              m_pauseMutex;
     QWaitCondition      m_pauseCond;
 };
