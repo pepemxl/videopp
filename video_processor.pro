@@ -36,7 +36,7 @@ win32 {
     # vcpkg appends 'd' to debug lib names for both MSVC and MinGW triplets.
     CONFIG(debug, debug|release) {
         LIBS += -L"$$VCPKG_DIR/debug/lib"
-        LIBS += $$replace(OPENCV_LIBS, "4", "4d")
+        #LIBS += $$replace(OPENCV_LIBS, "4", "4d")
     } else {
         LIBS += -L"$$VCPKG_DIR/lib"
         LIBS += $$OPENCV_LIBS
