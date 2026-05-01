@@ -1,3 +1,6 @@
+LOCAL_DATA/*
+
+
 build_qmake/*
 build_qmake_debug/*
 .claude/*
