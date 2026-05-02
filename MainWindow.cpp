@@ -1,6 +1,8 @@
 #include "MainWindow.h"
+#include "Filters.h"
 #include "IconManager.h"
 #include <cmath>
+#include <QActionGroup>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCursor>
@@ -304,17 +306,17 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ----- Filters menu -----
     QMenu *filtersMenu = menuBar()->addMenu(tr("F&ilters"));
-    m_actGrayscale = filtersMenu->addAction(tr("&Grayscale"));
-    m_actGrayscale->setCheckable(true);
-    m_actGrayscale->setChecked(false);
-    m_actBlur = filtersMenu->addAction(tr("Gaussian &Blur"));
-    m_actBlur->setCheckable(true);
-    m_actBlur->setChecked(false);
-
-    connect(m_actGrayscale, &QAction::toggled,
-            m_processor, &VideoProcessor::setGrayscaleEnabled);
-    connect(m_actBlur, &QAction::toggled,
-            m_processor, &VideoProcessor::setBlurEnabled);
+    auto *filterGroup = new QActionGroup(this);
+    filterGroup->setExclusive(true);
+    for (int t = Filters::None; t < Filters::Count; ++t) {
+        QAction *act = filtersMenu->addAction(Filters::displayName(t));
+        act->setCheckable(true);
+        act->setData(t);
+        if (t == Filters::None) act->setChecked(true);
+        filterGroup->addAction(act);
+    }
+    connect(filterGroup, &QActionGroup::triggered, this,
+            [this](QAction *a) { onFilterSelected(a->data().toInt()); });
 
     // ----- Buttons -----
     connect(m_btnStartFile, &QPushButton::clicked, this, &MainWindow::onStartFromFile);
@@ -414,21 +416,44 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 void MainWindow::onFrameReady(const cv::Mat &frame)
 {
     if (frame.empty()) return;
+    // Deep copy: the worker may overwrite its frame on the next iteration.
+    m_rawFrame = frame.clone();
+    rebuildCurrentFrame();
+    renderFrame();
+}
 
-    if (frame.channels() == 3) {
+void MainWindow::rebuildCurrentFrame()
+{
+    if (m_rawFrame.empty()) {
+        m_currentFrame = QImage();
+        return;
+    }
+    cv::Mat display = m_rawFrame.clone();
+    Filters::apply(m_filter, display);
+
+    if (display.channels() == 3) {
         cv::Mat rgb;
-        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+        cv::cvtColor(display, rgb, cv::COLOR_BGR2RGB);
         m_currentFrame = QImage(rgb.data, rgb.cols, rgb.rows,
                                 static_cast<int>(rgb.step),
                                 QImage::Format_RGB888).copy();
-    } else if (frame.channels() == 1) {
-        m_currentFrame = QImage(frame.data, frame.cols, frame.rows,
-                                static_cast<int>(frame.step),
+    } else if (display.channels() == 1) {
+        m_currentFrame = QImage(display.data, display.cols, display.rows,
+                                static_cast<int>(display.step),
                                 QImage::Format_Grayscale8).copy();
     } else {
-        return;
+        m_currentFrame = QImage();
     }
+}
 
+void MainWindow::onFilterSelected(int filterType)
+{
+    if (filterType < Filters::None || filterType >= Filters::Count) return;
+    m_filter = filterType;
+    // Worker only needs the filter for the recording path; it emits raw frames.
+    m_processor->setFilter(filterType);
+    // Re-apply on whatever frame is currently shown so the change is instant.
+    rebuildCurrentFrame();
     renderFrame();
 }
 
@@ -493,6 +518,7 @@ void MainWindow::startFile(const QString &path, double startSec)
     // Markers are per-video — drop session markers when the source changes.
     if (m_lastSource != path) {
         m_markers.clear();
+        refreshMarkerList();
         clearMetadataForm();
     }
     m_processor->setSource(path, VideoProcessor::FromFile);
@@ -947,9 +973,14 @@ void MainWindow::onAddPlayerMarker(bool checked)
 {
     if (checked) {
         m_pendingMarker = PendingMarker::Player;
+        m_pendingMoveIndex = -1;
         if (m_btnAddDisc->isChecked()) {
             QSignalBlocker b(m_btnAddDisc);
             m_btnAddDisc->setChecked(false);
+        }
+        if (m_btnMoveMarker && m_btnMoveMarker->isChecked()) {
+            QSignalBlocker b(m_btnMoveMarker);
+            m_btnMoveMarker->setChecked(false);
         }
         m_videoLabel->setCursor(Qt::CrossCursor);
     } else if (m_pendingMarker == PendingMarker::Player) {
@@ -962,9 +993,14 @@ void MainWindow::onAddDiscMarker(bool checked)
 {
     if (checked) {
         m_pendingMarker = PendingMarker::Disc;
+        m_pendingMoveIndex = -1;
         if (m_btnAddPlayer->isChecked()) {
             QSignalBlocker b(m_btnAddPlayer);
             m_btnAddPlayer->setChecked(false);
+        }
+        if (m_btnMoveMarker && m_btnMoveMarker->isChecked()) {
+            QSignalBlocker b(m_btnMoveMarker);
+            m_btnMoveMarker->setChecked(false);
         }
         m_videoLabel->setCursor(Qt::CrossCursor);
     } else if (m_pendingMarker == PendingMarker::Disc) {
@@ -976,6 +1012,7 @@ void MainWindow::onAddDiscMarker(bool checked)
 void MainWindow::cancelMarkerPlacement()
 {
     m_pendingMarker = PendingMarker::None;
+    m_pendingMoveIndex = -1;
     if (m_btnAddPlayer->isChecked()) {
         QSignalBlocker b(m_btnAddPlayer);
         m_btnAddPlayer->setChecked(false);
@@ -984,12 +1021,28 @@ void MainWindow::cancelMarkerPlacement()
         QSignalBlocker b(m_btnAddDisc);
         m_btnAddDisc->setChecked(false);
     }
+    if (m_btnMoveMarker && m_btnMoveMarker->isChecked()) {
+        QSignalBlocker b(m_btnMoveMarker);
+        m_btnMoveMarker->setChecked(false);
+    }
     m_videoLabel->unsetCursor();
 }
 
 void MainWindow::placeMarkerAt(int imgX, int imgY)
 {
     if (m_pendingMarker == PendingMarker::None) return;
+
+    if (m_pendingMarker == PendingMarker::MoveExisting) {
+        if (m_pendingMoveIndex >= 0 && m_pendingMoveIndex < m_markers.size()) {
+            m_markers[m_pendingMoveIndex].x = imgX;
+            m_markers[m_pendingMoveIndex].y = imgY;
+        }
+        cancelMarkerPlacement();
+        refreshMarkerList();
+        renderFrame();
+        return;
+    }
+
     Marker m;
     m.type    = (m_pendingMarker == PendingMarker::Player)
                     ? QStringLiteral("player")
@@ -999,6 +1052,7 @@ void MainWindow::placeMarkerAt(int imgX, int imgY)
     m.timeSec = m_positionSec;
     m_markers.append(m);
     cancelMarkerPlacement();
+    refreshMarkerList();
     renderFrame();
 }
 
@@ -1006,6 +1060,7 @@ void MainWindow::onClearMarkers()
 {
     if (m_markers.isEmpty()) return;
     m_markers.clear();
+    refreshMarkerList();
     renderFrame();
 }
 
@@ -1100,6 +1155,7 @@ bool MainWindow::loadMarkersFromFile(const QString &path)
 
     fs.release();
     m_markers = loaded;
+    refreshMarkerList();
     return true;
 }
 
@@ -1161,10 +1217,43 @@ QWidget *MainWindow::buildLeftSidebar()
 
     auto *grpMarkers = new QGroupBox(tr("Markers"));
     auto *gv = new QVBoxLayout(grpMarkers);
-    gv->addWidget(m_btnAddPlayer);
-    gv->addWidget(m_btnAddDisc);
-    gv->addWidget(m_btnSaveMarkers);
+    auto *addRow = new QHBoxLayout;
+    addRow->addWidget(m_btnAddPlayer);
+    addRow->addWidget(m_btnAddDisc);
+    addRow->addWidget(m_btnSaveMarkers);
+    addRow->addStretch();
+    gv->addLayout(addRow);
     vbox->addWidget(grpMarkers);
+
+    auto *grpCurrent = new QGroupBox(tr("Current Markers"));
+    auto *cv = new QVBoxLayout(grpCurrent);
+    m_markerList = new QListWidget;
+    m_markerList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_markerList->setToolTip(tr("Double-click a marker to seek there"));
+    cv->addWidget(m_markerList);
+    auto *editRow = new QHBoxLayout;
+    m_btnDeleteMarker = new QPushButton(tr("Delete"));
+    m_btnToggleType   = new QPushButton(tr("Toggle Type"));
+    m_btnMoveMarker   = new QPushButton(tr("Move"));
+    m_btnMoveMarker->setCheckable(true);
+    m_btnDeleteMarker->setToolTip(tr("Remove the selected marker"));
+    m_btnToggleType->setToolTip(tr("Switch player ↔ disc for the selected marker"));
+    m_btnMoveMarker->setToolTip(tr("Click, then click on the video to reposition the selected marker"));
+    editRow->addWidget(m_btnDeleteMarker);
+    editRow->addWidget(m_btnToggleType);
+    editRow->addWidget(m_btnMoveMarker);
+    cv->addLayout(editRow);
+    connect(m_markerList, &QListWidget::itemActivated,
+            this, &MainWindow::onMarkerListActivated);
+    connect(m_markerList, &QListWidget::itemDoubleClicked,
+            this, &MainWindow::onMarkerListActivated);
+    connect(m_btnDeleteMarker, &QPushButton::clicked,
+            this, &MainWindow::onDeleteSelectedMarker);
+    connect(m_btnToggleType, &QPushButton::clicked,
+            this, &MainWindow::onToggleSelectedMarkerType);
+    connect(m_btnMoveMarker, &QPushButton::toggled,
+            this, &MainWindow::onMoveSelectedMarker);
+    vbox->addWidget(grpCurrent, 1);
 
     auto *grpMeta = new QGroupBox(tr("Shot Metadata"));
     auto *form = new QFormLayout(grpMeta);
@@ -1193,7 +1282,7 @@ QWidget *MainWindow::buildLeftSidebar()
             this, &MainWindow::onMarkerFileActivated);
     connect(m_markerFileList, &QListWidget::itemDoubleClicked,
             this, &MainWindow::onMarkerFileActivated);
-    vbox->addWidget(grpFiles, 1);
+    vbox->addWidget(grpFiles);
 
     return root;
 }
@@ -1367,5 +1456,104 @@ void MainWindow::setPoseJointAngles(const QVector<QPair<QString, double>> &angle
         m_poseJointList->addItem(QStringLiteral("%1: %2°")
                                      .arg(p.first)
                                      .arg(p.second, 0, 'f', 1));
+    }
+}
+
+// ---------- Current marker list (edit/delete) ----------
+
+void MainWindow::refreshMarkerList()
+{
+    if (!m_markerList) return;
+    const int prev = m_markerList->currentRow();
+    m_markerList->clear();
+    for (int i = 0; i < m_markers.size(); ++i) {
+        const Marker &m = m_markers[i];
+        const QString letter = (m.type == QLatin1String("player"))
+                                   ? QStringLiteral("P") : QStringLiteral("D");
+        const QString text = QStringLiteral("[%1] %2 — (%3, %4)")
+                                 .arg(letter)
+                                 .arg(formatTime(m.timeSec))
+                                 .arg(m.x).arg(m.y);
+        auto *item = new QListWidgetItem(text);
+        item->setData(Qt::UserRole, i);
+        m_markerList->addItem(item);
+    }
+    if (prev >= 0 && prev < m_markerList->count()) {
+        m_markerList->setCurrentRow(prev);
+    }
+    const bool hasItems = m_markerList->count() > 0;
+    if (m_btnDeleteMarker) m_btnDeleteMarker->setEnabled(hasItems);
+    if (m_btnToggleType)   m_btnToggleType->setEnabled(hasItems);
+    if (m_btnMoveMarker)   m_btnMoveMarker->setEnabled(hasItems);
+}
+
+int MainWindow::selectedMarkerIndex() const
+{
+    if (!m_markerList) return -1;
+    const int row = m_markerList->currentRow();
+    if (row < 0 || row >= m_markers.size()) return -1;
+    return row;
+}
+
+void MainWindow::onMarkerListActivated(QListWidgetItem *item)
+{
+    if (!item) return;
+    const int idx = item->data(Qt::UserRole).toInt();
+    if (idx < 0 || idx >= m_markers.size()) return;
+    if (m_isFileSource && m_processor->isRunning()) {
+        m_processor->seekToSeconds(m_markers[idx].timeSec);
+    } else {
+        m_positionSec = m_markers[idx].timeSec;
+        renderFrame();
+    }
+}
+
+void MainWindow::onDeleteSelectedMarker()
+{
+    const int idx = selectedMarkerIndex();
+    if (idx < 0) return;
+    m_markers.remove(idx);
+    if (m_pendingMoveIndex == idx) cancelMarkerPlacement();
+    else if (m_pendingMoveIndex > idx) --m_pendingMoveIndex;
+    refreshMarkerList();
+    renderFrame();
+}
+
+void MainWindow::onToggleSelectedMarkerType()
+{
+    const int idx = selectedMarkerIndex();
+    if (idx < 0) return;
+    Marker &m = m_markers[idx];
+    m.type = (m.type == QLatin1String("player"))
+                 ? QStringLiteral("disc")
+                 : QStringLiteral("player");
+    refreshMarkerList();
+    renderFrame();
+}
+
+void MainWindow::onMoveSelectedMarker(bool checked)
+{
+    if (checked) {
+        const int idx = selectedMarkerIndex();
+        if (idx < 0) {
+            QSignalBlocker b(m_btnMoveMarker);
+            m_btnMoveMarker->setChecked(false);
+            return;
+        }
+        m_pendingMarker = PendingMarker::MoveExisting;
+        m_pendingMoveIndex = idx;
+        if (m_btnAddPlayer->isChecked()) {
+            QSignalBlocker b(m_btnAddPlayer);
+            m_btnAddPlayer->setChecked(false);
+        }
+        if (m_btnAddDisc->isChecked()) {
+            QSignalBlocker b(m_btnAddDisc);
+            m_btnAddDisc->setChecked(false);
+        }
+        m_videoLabel->setCursor(Qt::CrossCursor);
+    } else if (m_pendingMarker == PendingMarker::MoveExisting) {
+        m_pendingMarker = PendingMarker::None;
+        m_pendingMoveIndex = -1;
+        m_videoLabel->unsetCursor();
     }
 }

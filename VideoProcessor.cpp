@@ -1,4 +1,5 @@
 #include "VideoProcessor.h"
+#include "Filters.h"
 #include <QFileInfo>
 #include <QMutexLocker>
 
@@ -164,14 +165,11 @@ void VideoProcessor::run()
             if (posMs >= 0.0) m_currentSec.store(posMs / 1000.0);
         }
 
-        if (m_grayscale.load()) {
-            cv::cvtColor(frame, frame, cv::COLOR_BGR2GRAY);
-        }
-        if (m_blur.load()) {
-            cv::GaussianBlur(frame, frame, cv::Size(15, 15), 0);
-        }
-
         // ----- Recording -----
+        // Filter is applied on the recording copy so the saved file is
+        // already filtered. The display path applies its own filter on the
+        // raw frame in the GUI thread, which lets filter changes update the
+        // currently-shown frame instantly.
         if (m_recordStartRequested.exchange(false) && !writer.isOpened()) {
             QString path;
             {
@@ -198,11 +196,10 @@ void VideoProcessor::run()
             emit recordingChanged(false);
         }
         if (writer.isOpened()) {
-            cv::Mat out;
-            if (frame.channels() == 1) {
-                cv::cvtColor(frame, out, cv::COLOR_GRAY2BGR);
-            } else {
-                out = frame;
+            cv::Mat out = frame.clone();
+            Filters::apply(m_filter.load(), out);
+            if (out.channels() == 1) {
+                cv::cvtColor(out, out, cv::COLOR_GRAY2BGR);
             }
             if (out.size() == writerSize) {
                 // Speed-aware duplication: at 0.5x write each frame ~2x to preserve

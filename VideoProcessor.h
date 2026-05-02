@@ -45,11 +45,10 @@ public:
     void setStartPositionSec(double sec) { m_startSec.store(sec); }
     double currentPositionSec() const { return m_currentSec.load(); }
 
-    // Filter toggles — applied per-frame inside run().
-    void setGrayscaleEnabled(bool enabled) { m_grayscale.store(enabled); }
-    void setBlurEnabled(bool enabled)      { m_blur.store(enabled); }
-    bool isGrayscaleEnabled() const { return m_grayscale.load(); }
-    bool isBlurEnabled() const      { return m_blur.load(); }
+    // Active filter (Filters::Type enum value). Used by the recording
+    // writer; the display path applies the filter on the GUI side.
+    void setFilter(int type) { m_filter.store(type); }
+    int  filter() const      { return m_filter.load(); }
 
 signals:
     void frameReady(const cv::Mat &frame);
@@ -67,8 +66,7 @@ private:
     SourceType          m_sourceType{FromCamera};
     std::atomic<bool>   m_stopped{false};
     std::atomic<bool>   m_paused{false};
-    std::atomic<bool>   m_grayscale{false};
-    std::atomic<bool>   m_blur{false};
+    std::atomic<int>    m_filter{0};   // Filters::None
     std::atomic<double> m_seekRequestSec{0.0};
     std::atomic<double> m_seekAbsSec{-1.0};   // -1 = no absolute seek pending
     std::atomic<double> m_speed{1.0};

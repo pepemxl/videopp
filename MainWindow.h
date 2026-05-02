@@ -79,6 +79,11 @@ private slots:
     void onClearMarkers();
     void onToggleMarkersVisible(bool checked);
     void onMarkerFileActivated(QListWidgetItem *item);
+    void onMarkerListActivated(QListWidgetItem *item);
+    void onDeleteSelectedMarker();
+    void onToggleSelectedMarkerType();
+    void onMoveSelectedMarker(bool checked);
+    void onFilterSelected(int filterType);
 
 private:
     void updatePlaybackControls();
@@ -95,9 +100,12 @@ private:
     QString markersBaseDirForCurrentVideo() const;
     void zoomBy(double factor, QPointF viewportFocus);
     void drawMarkersOnPixmap(QPixmap &pix) const;
+    void rebuildCurrentFrame();
     QWidget *buildLeftSidebar();
     QWidget *buildRightSidebar();
     void refreshMarkerFileList();
+    void refreshMarkerList();
+    int  selectedMarkerIndex() const;
     ShotMetadata currentMetadataFromForm() const;
     void applyMetadataToForm(const ShotMetadata &meta);
     void clearMetadataForm();
@@ -133,6 +141,10 @@ private:
     QPushButton  *m_btnAddDisc;
     QPushButton  *m_btnSaveMarkers;
     QListWidget  *m_markerFileList;
+    QListWidget  *m_markerList;            // current session markers
+    QPushButton  *m_btnDeleteMarker;
+    QPushButton  *m_btnToggleType;
+    QPushButton  *m_btnMoveMarker;
     QLineEdit    *m_edPlayerName;
     QLineEdit    *m_edPdgaNumber;
     QLineEdit    *m_edCourseName;
@@ -145,8 +157,6 @@ private:
     QListWidget  *m_poseJointList;
     QLabel       *m_speedLabel;
 
-    QAction      *m_actGrayscale;
-    QAction      *m_actBlur;
     QAction      *m_actRecord;
     QAction      *m_actShowMarkers;
     QMenu        *m_recentMenu;
@@ -154,7 +164,9 @@ private:
 
     VideoProcessor *m_processor;
 
-    QImage   m_currentFrame;
+    cv::Mat  m_rawFrame;        // last raw frame as received from the worker
+    int      m_filter{0};       // Filters::None
+    QImage   m_currentFrame;    // post-filter, ready for display
     double   m_zoom{1.0};
     QString  m_lastSource;
     double   m_lastPosSec{0.0};
@@ -164,8 +176,9 @@ private:
     bool     m_userScrubbing{false};
     QStringList m_recentVideos;
 
-    enum class PendingMarker { None, Player, Disc };
+    enum class PendingMarker { None, Player, Disc, MoveExisting };
     PendingMarker  m_pendingMarker{PendingMarker::None};
+    int            m_pendingMoveIndex{-1};
     QVector<Marker> m_markers;
     bool           m_markersVisible{true};
 };

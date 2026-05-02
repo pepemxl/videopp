@@ -11,6 +11,7 @@ SOURCES += \
     VideoProcessor.cpp
 
 HEADERS += \
+    Filters.h \
     IconManager.h \
     MainWindow.h \
     VideoProcessor.h
@@ -32,7 +33,8 @@ win32 {
 
     # Match the modules actually built by vcpkg (opencv4[core,ffmpeg]).
     OPENCV_LIBS = -lopencv_core4 -lopencv_imgproc4 \
-                  -lopencv_imgcodecs4 -lopencv_videoio4
+                  -lopencv_imgcodecs4 -lopencv_videoio4 \
+                  -lopencv_photo4
 
     # vcpkg appends 'd' to debug lib names for both MSVC and MinGW triplets.
     CONFIG(debug, debug|release) {
