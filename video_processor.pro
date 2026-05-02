@@ -11,6 +11,7 @@ SOURCES += \
     VideoProcessor.cpp
 
 HEADERS += \
+    IconManager.h \
     MainWindow.h \
     VideoProcessor.h
 
@@ -42,8 +43,6 @@ win32 {
         LIBS += $$OPENCV_LIBS
     }
 }
-
-DISTFILES +=
 
 RESOURCES += \
     recursos.qrc
