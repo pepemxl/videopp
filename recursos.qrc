@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>logo.png</file>
+        <file>iconos/icono_play.png</file>
+        <file>iconos/icono_pause.png</file>
     </qresource>
 </RCC>
