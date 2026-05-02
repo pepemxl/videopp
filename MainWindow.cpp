@@ -33,7 +33,8 @@ constexpr double kZoomMin         = 0.25;
 constexpr double kZoomMax         = 6.0;
 constexpr int    kMaxRecent       = 10;
 constexpr int    kSliderMaxMs     = 1'000'000'000;  // ~11.5 days, safe upper bound
-const QString kRecentKey = QStringLiteral("recentVideos");
+const QString kRecentKey      = QStringLiteral("recentVideos");
+const QString kLastOpenDirKey = QStringLiteral("lastOpenDir");
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -298,10 +299,16 @@ void MainWindow::startFile(const QString &path, double startSec)
 
 void MainWindow::onStartFromFile()
 {
+    QSettings settings;
+    QString startDir = settings.value(kLastOpenDirKey).toString();
+    if (startDir.isEmpty() || !QDir(startDir).exists()) {
+        startDir = QDir::homePath();
+    }
     const QString file = QFileDialog::getOpenFileName(
-        this, tr("Open video file"), QDir::homePath(),
+        this, tr("Open video file"), startDir,
         tr("Video (*.mp4 *.avi *.mkv *.mov *.webm)"));
     if (!file.isEmpty()) {
+        settings.setValue(kLastOpenDirKey, QFileInfo(file).absolutePath());
         startFile(file, 0.0);
     }
 }
