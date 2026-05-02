@@ -7,7 +7,16 @@
 #include <QAction>
 #include <QImage>
 #include <QStringList>
+#include <QVector>
 #include "VideoProcessor.h"
+
+struct Marker
+{
+    QString type;     // "player" or "disc"
+    int     x{0};     // image-space coordinates (independent of zoom/scale)
+    int     y{0};
+    double  timeSec{0.0};
+};
 
 class QComboBox;
 class QMenu;
@@ -50,6 +59,12 @@ private slots:
     void onPositionChanged(double seconds);
     void onSliderMoved(int value);
     void onSliderReleased();
+    void onAddPlayerMarker(bool checked);
+    void onAddDiscMarker(bool checked);
+    void onSaveMarkers();
+    void onLoadMarkers();
+    void onClearMarkers();
+    void onToggleMarkersVisible(bool checked);
 
 private:
     void updatePlaybackControls();
@@ -62,6 +77,14 @@ private:
     void saveRecent();
     void rebuildRecentMenu();
     QString nextRecordingPath() const;
+    QString nextMarkersPath() const;
+    QString markersBaseDirForCurrentVideo() const;
+    void zoomBy(double factor, QPointF viewportFocus);
+    void drawMarkersOnPixmap(QPixmap &pix) const;
+    void placeMarkerAt(int imgX, int imgY);
+    void cancelMarkerPlacement();
+    bool saveMarkersToFile(const QString &path);
+    bool loadMarkersFromFile(const QString &path);
     static QString formatTime(double seconds);
 
     QLabel       *m_videoLabel;
@@ -77,11 +100,15 @@ private:
     QPushButton  *m_btnForward;
     QPushButton  *m_btnRecord;
     QComboBox    *m_formatCombo;
+    QPushButton  *m_btnAddPlayer;
+    QPushButton  *m_btnAddDisc;
+    QPushButton  *m_btnSaveMarkers;
     QLabel       *m_speedLabel;
 
     QAction      *m_actGrayscale;
     QAction      *m_actBlur;
     QAction      *m_actRecord;
+    QAction      *m_actShowMarkers;
     QMenu        *m_recentMenu;
     QAction      *m_clearRecentAction;
 
@@ -96,6 +123,11 @@ private:
     double   m_positionSec{0.0};
     bool     m_userScrubbing{false};
     QStringList m_recentVideos;
+
+    enum class PendingMarker { None, Player, Disc };
+    PendingMarker  m_pendingMarker{PendingMarker::None};
+    QVector<Marker> m_markers;
+    bool           m_markersVisible{true};
 };
 
 #endif

@@ -2,20 +2,27 @@
 #include <cmath>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStatusBar>
 #include <QTime>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -29,10 +36,11 @@ constexpr double kSpeedStep       = 1.25;   // multiplicative
 constexpr double kSpeedMin        = 0.25;
 constexpr double kSpeedMax        = 4.0;
 constexpr double kZoomStep        = 1.15;   // multiplicative
-constexpr double kZoomMin         = 0.25;
+constexpr double kZoomMin         = 1.0;    // fit-to-window is the floor
 constexpr double kZoomMax         = 6.0;
 constexpr int    kMaxRecent       = 10;
 constexpr int    kSliderMaxMs     = 1'000'000'000;  // ~11.5 days, safe upper bound
+constexpr double kMarkerWindowSec = 1.0;             // visible for this long after placement
 const QString kRecentKey      = QStringLiteral("recentVideos");
 const QString kLastOpenDirKey = QStringLiteral("lastOpenDir");
 }
@@ -44,14 +52,16 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_videoLabel = new QLabel(tr("Video display"));
     m_videoLabel->setAlignment(Qt::AlignCenter);
-    m_videoLabel->setMinimumSize(640, 480);
     m_videoLabel->setBackgroundRole(QPalette::Dark);
-    m_videoLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
     m_scrollArea = new QScrollArea;
     m_scrollArea->setWidget(m_videoLabel);
-    m_scrollArea->setWidgetResizable(true);
+    // widgetResizable=false: the label sizes itself to the pixmap so scrollbars
+    // appear when zoomed in. With =true the label is clamped to viewport size
+    // and any pixmap larger than the viewport is clipped (and markers go with it).
+    m_scrollArea->setWidgetResizable(false);
     m_scrollArea->setAlignment(Qt::AlignCenter);
+    m_scrollArea->setMinimumSize(640, 480);
     m_scrollArea->viewport()->installEventFilter(this);
     m_scrollArea->installEventFilter(this);
 
@@ -69,6 +79,16 @@ MainWindow::MainWindow(QWidget *parent)
                              QStringLiteral("mp4"),
                              QStringLiteral("mkv")});
     m_formatCombo->setToolTip(tr("Recording container format"));
+
+    m_btnAddPlayer    = new QPushButton(tr("Add Player Marker"));
+    m_btnAddPlayer->setCheckable(true);
+    m_btnAddPlayer->setToolTip(tr("Click, then click on the video to place a player marker"));
+    m_btnAddDisc      = new QPushButton(tr("Add Disc Marker"));
+    m_btnAddDisc->setCheckable(true);
+    m_btnAddDisc->setToolTip(tr("Click, then click on the video to place a disc marker"));
+    m_btnSaveMarkers  = new QPushButton(tr("Save Markers"));
+    m_btnSaveMarkers->setToolTip(tr("Save current markers to LOCAL_DATA/configs/<video>/"));
+
     m_speedLabel   = new QLabel(tr("Speed: 1.00x"));
 
     m_seekSlider = new QSlider(Qt::Horizontal);
@@ -99,11 +119,18 @@ MainWindow::MainWindow(QWidget *parent)
     playbackRow->addStretch();
     playbackRow->addWidget(m_speedLabel);
 
+    auto markersRow = new QHBoxLayout;
+    markersRow->addWidget(m_btnAddPlayer);
+    markersRow->addWidget(m_btnAddDisc);
+    markersRow->addWidget(m_btnSaveMarkers);
+    markersRow->addStretch();
+
     auto layout = new QVBoxLayout;
     layout->addWidget(m_scrollArea, 1);
     layout->addLayout(seekRow);
     layout->addLayout(sourceRow);
     layout->addLayout(playbackRow);
+    layout->addLayout(markersRow);
 
     auto central = new QWidget;
     central->setLayout(layout);
@@ -164,6 +191,32 @@ MainWindow::MainWindow(QWidget *parent)
     connect(actZoomOut,   &QAction::triggered, this, &MainWindow::onZoomOut);
     connect(actZoomReset, &QAction::triggered, this, &MainWindow::onResetZoom);
 
+    // ----- Markers menu -----
+    QMenu *markersMenu = menuBar()->addMenu(tr("&Markers"));
+    QAction *actAddPlayerM = markersMenu->addAction(tr("Add &Player Marker"));
+    actAddPlayerM->setCheckable(true);
+    QAction *actAddDiscM   = markersMenu->addAction(tr("Add &Disc Marker"));
+    actAddDiscM->setCheckable(true);
+    markersMenu->addSeparator();
+    QAction *actSaveM = markersMenu->addAction(tr("&Save Markers"));
+    QAction *actLoadM = markersMenu->addAction(tr("&Load Markers..."));
+    QAction *actClearM = markersMenu->addAction(tr("&Clear Markers"));
+    markersMenu->addSeparator();
+    m_actShowMarkers = markersMenu->addAction(tr("Show &Markers"));
+    m_actShowMarkers->setCheckable(true);
+    m_actShowMarkers->setChecked(true);
+
+    // Keep menu actions and their button counterparts in sync.
+    connect(actAddPlayerM, &QAction::toggled, m_btnAddPlayer, &QPushButton::setChecked);
+    connect(m_btnAddPlayer, &QPushButton::toggled, actAddPlayerM, &QAction::setChecked);
+    connect(actAddDiscM,   &QAction::toggled, m_btnAddDisc,   &QPushButton::setChecked);
+    connect(m_btnAddDisc,   &QPushButton::toggled, actAddDiscM, &QAction::setChecked);
+    connect(actSaveM,  &QAction::triggered, this, &MainWindow::onSaveMarkers);
+    connect(actLoadM,  &QAction::triggered, this, &MainWindow::onLoadMarkers);
+    connect(actClearM, &QAction::triggered, this, &MainWindow::onClearMarkers);
+    connect(m_actShowMarkers, &QAction::toggled,
+            this, &MainWindow::onToggleMarkersVisible);
+
     // ----- Filters menu -----
     QMenu *filtersMenu = menuBar()->addMenu(tr("F&ilters"));
     m_actGrayscale = filtersMenu->addAction(tr("&Grayscale"));
@@ -187,6 +240,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_btnForward,   &QPushButton::clicked, this, &MainWindow::onSeekForward);
     connect(m_btnBackward,  &QPushButton::clicked, this, &MainWindow::onSeekBackward);
     connect(m_btnRecord,    &QPushButton::toggled, this, &MainWindow::onToggleRecord);
+    connect(m_btnAddPlayer, &QPushButton::toggled, this, &MainWindow::onAddPlayerMarker);
+    connect(m_btnAddDisc,   &QPushButton::toggled, this, &MainWindow::onAddDiscMarker);
+    connect(m_btnSaveMarkers, &QPushButton::clicked, this, &MainWindow::onSaveMarkers);
+
+    // Capture clicks on the video label for marker placement.
+    m_videoLabel->setMouseTracking(false);
+    m_videoLabel->installEventFilter(this);
 
     // ----- Seek slider -----
     connect(m_seekSlider, &QSlider::sliderPressed, this,
@@ -229,9 +289,38 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *we = static_cast<QWheelEvent *>(event);
         const int dy = we->angleDelta().y();
         if (dy != 0) {
-            if (dy > 0) onZoomIn();
-            else        onZoomOut();
+            const double factor = (dy > 0) ? kZoomStep : (1.0 / kZoomStep);
+            // we->position() is in the receiving widget's local coords.
+            QPointF vpFocus = we->position();
+            if (watched == m_scrollArea) {
+                vpFocus = QPointF(m_scrollArea->viewport()->mapFrom(
+                    m_scrollArea, we->position().toPoint()));
+            }
+            zoomBy(factor, vpFocus);
             return true;  // consume — don't scroll the area
+        }
+    }
+    if (watched == m_videoLabel
+        && event->type() == QEvent::MouseButtonPress
+        && m_pendingMarker != PendingMarker::None) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton && !m_currentFrame.isNull()) {
+            const QPixmap pm = m_videoLabel->pixmap(Qt::ReturnByValue);
+            if (!pm.isNull()) {
+                const double sx = double(m_currentFrame.width())  / pm.width();
+                const double sy = double(m_currentFrame.height()) / pm.height();
+                const int imgX = static_cast<int>(me->position().x() * sx);
+                const int imgY = static_cast<int>(me->position().y() * sy);
+                if (imgX >= 0 && imgY >= 0
+                    && imgX < m_currentFrame.width()
+                    && imgY < m_currentFrame.height()) {
+                    placeMarkerAt(imgX, imgY);
+                    return true;
+                }
+            }
+        } else if (me->button() == Qt::RightButton) {
+            cancelMarkerPlacement();
+            return true;
         }
     }
     return QMainWindow::eventFilter(watched, event);
@@ -262,21 +351,63 @@ void MainWindow::renderFrame()
 {
     if (m_currentFrame.isNull()) return;
 
-    const QSize viewport = m_scrollArea->viewport()->size();
+    // maximumViewportSize is the viewport size assuming no scrollbars are
+    // currently shown — stable across zoom changes (avoids the dance where
+    // adding a scrollbar shrinks the viewport and shrinks the fit size).
+    const QSize viewport = m_scrollArea->maximumViewportSize();
     QSize fit = m_currentFrame.size().scaled(viewport, Qt::KeepAspectRatio);
     QSize target = fit * m_zoom;
     if (target.width() < 1 || target.height() < 1) return;
 
     QPixmap pix = QPixmap::fromImage(m_currentFrame).scaled(
         target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (m_markersVisible) {
+        drawMarkersOnPixmap(pix);
+    }
     m_videoLabel->setPixmap(pix);
     m_videoLabel->resize(pix.size());
+}
+
+void MainWindow::drawMarkersOnPixmap(QPixmap &pix) const
+{
+    if (m_markers.isEmpty() || pix.isNull() || m_currentFrame.isNull()) return;
+    const double sx = double(pix.width())  / m_currentFrame.width();
+    const double sy = double(pix.height()) / m_currentFrame.height();
+    const double now = m_positionSec;
+
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QFont f = painter.font();
+    f.setBold(true);
+    f.setPointSize(10);
+    painter.setFont(f);
+
+    for (const Marker &m : m_markers) {
+        // Show only within [marker.time, marker.time + window].
+        if (now < m.timeSec || now > m.timeSec + kMarkerWindowSec) continue;
+        const QPointF c(m.x * sx, m.y * sy);
+        const bool isPlayer = (m.type == QLatin1String("player"));
+        const QColor color  = isPlayer ? QColor(255, 64, 64)
+                                       : QColor( 64, 220, 255);
+        painter.setPen(QPen(color, 2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(c, 8.0, 8.0);
+        painter.drawLine(c + QPointF(-12, 0), c + QPointF(12, 0));
+        painter.drawLine(c + QPointF(0, -12), c + QPointF(0, 12));
+        painter.setPen(color);
+        painter.drawText(c + QPointF(11, -10),
+                         isPlayer ? QStringLiteral("P") : QStringLiteral("D"));
+    }
 }
 
 void MainWindow::startFile(const QString &path, double startSec)
 {
     if (m_processor->isRunning()) {
         m_processor->stopProcessing();
+    }
+    // Markers are per-video — drop session markers when the source changes.
+    if (m_lastSource != path) {
+        m_markers.clear();
     }
     m_processor->setSource(path, VideoProcessor::FromFile);
     m_processor->setStartPositionSec(startSec);
@@ -401,24 +532,72 @@ void MainWindow::onResetSpeed()
 
 void MainWindow::onZoomIn()
 {
-    double z = m_zoom * kZoomStep;
-    if (z > kZoomMax) z = kZoomMax;
-    m_zoom = z;
-    renderFrame();
+    const QSize vp = m_scrollArea->viewport()->size();
+    zoomBy(kZoomStep, QPointF(vp.width() / 2.0, vp.height() / 2.0));
 }
 
 void MainWindow::onZoomOut()
 {
-    double z = m_zoom / kZoomStep;
-    if (z < kZoomMin) z = kZoomMin;
-    m_zoom = z;
-    renderFrame();
+    const QSize vp = m_scrollArea->viewport()->size();
+    zoomBy(1.0 / kZoomStep, QPointF(vp.width() / 2.0, vp.height() / 2.0));
 }
 
 void MainWindow::onResetZoom()
 {
     m_zoom = 1.0;
     renderFrame();
+    m_scrollArea->horizontalScrollBar()->setValue(0);
+    m_scrollArea->verticalScrollBar()->setValue(0);
+}
+
+void MainWindow::zoomBy(double factor, QPointF viewportFocus)
+{
+    double z = m_zoom * factor;
+    if (z < kZoomMin) z = kZoomMin;
+    if (z > kZoomMax) z = kZoomMax;
+    if (qFuzzyCompare(z, m_zoom)) return;
+
+    // Without a frame, just apply the zoom (will render once a frame arrives).
+    if (m_currentFrame.isNull()) {
+        m_zoom = z;
+        renderFrame();
+        return;
+    }
+
+    // Snapshot the image-space point currently under the cursor.
+    const QPixmap pmCur = m_videoLabel->pixmap(Qt::ReturnByValue);
+    if (pmCur.isNull() || pmCur.width() <= 0 || pmCur.height() <= 0) {
+        m_zoom = z;
+        renderFrame();
+        return;
+    }
+    const QPoint widgetTL = m_videoLabel->mapTo(m_scrollArea->viewport(), QPoint(0, 0));
+    const QPointF inLabel = viewportFocus - QPointF(widgetTL);
+    const double imgX = inLabel.x() * double(m_currentFrame.width())  / pmCur.width();
+    const double imgY = inLabel.y() * double(m_currentFrame.height()) / pmCur.height();
+
+    m_zoom = z;
+    renderFrame();
+
+    // Translate that same image point back into new label coordinates and
+    // adjust scrollbars so it lands at viewportFocus again.
+    const QPixmap pmNew = m_videoLabel->pixmap(Qt::ReturnByValue);
+    if (pmNew.isNull() || pmNew.width() <= 0 || pmNew.height() <= 0) return;
+    const double newInLabelX = imgX * double(pmNew.width())  / m_currentFrame.width();
+    const double newInLabelY = imgY * double(pmNew.height()) / m_currentFrame.height();
+
+    auto *hbar = m_scrollArea->horizontalScrollBar();
+    auto *vbar = m_scrollArea->verticalScrollBar();
+    const QPoint newWidgetTL = m_videoLabel->mapTo(m_scrollArea->viewport(),
+                                                   QPoint(0, 0));
+    // current viewport position of the image point:
+    const double curVpX = newWidgetTL.x() + newInLabelX;
+    const double curVpY = newWidgetTL.y() + newInLabelY;
+    // delta to apply via scrollbars:
+    const int dx = static_cast<int>(curVpX - viewportFocus.x());
+    const int dy = static_cast<int>(curVpY - viewportFocus.y());
+    hbar->setValue(hbar->value() + dx);
+    vbar->setValue(vbar->value() + dy);
 }
 
 void MainWindow::onToggleRecord(bool checked)
@@ -652,4 +831,192 @@ void MainWindow::rebuildRecentMenu()
     m_clearRecentAction = m_recentMenu->addAction(tr("&Clear list"));
     connect(m_clearRecentAction, &QAction::triggered,
             this, &MainWindow::onClearRecent);
+}
+
+// ---------- Markers ----------
+
+void MainWindow::onAddPlayerMarker(bool checked)
+{
+    if (checked) {
+        m_pendingMarker = PendingMarker::Player;
+        if (m_btnAddDisc->isChecked()) {
+            QSignalBlocker b(m_btnAddDisc);
+            m_btnAddDisc->setChecked(false);
+        }
+        m_videoLabel->setCursor(Qt::CrossCursor);
+    } else if (m_pendingMarker == PendingMarker::Player) {
+        m_pendingMarker = PendingMarker::None;
+        m_videoLabel->unsetCursor();
+    }
+}
+
+void MainWindow::onAddDiscMarker(bool checked)
+{
+    if (checked) {
+        m_pendingMarker = PendingMarker::Disc;
+        if (m_btnAddPlayer->isChecked()) {
+            QSignalBlocker b(m_btnAddPlayer);
+            m_btnAddPlayer->setChecked(false);
+        }
+        m_videoLabel->setCursor(Qt::CrossCursor);
+    } else if (m_pendingMarker == PendingMarker::Disc) {
+        m_pendingMarker = PendingMarker::None;
+        m_videoLabel->unsetCursor();
+    }
+}
+
+void MainWindow::cancelMarkerPlacement()
+{
+    m_pendingMarker = PendingMarker::None;
+    if (m_btnAddPlayer->isChecked()) {
+        QSignalBlocker b(m_btnAddPlayer);
+        m_btnAddPlayer->setChecked(false);
+    }
+    if (m_btnAddDisc->isChecked()) {
+        QSignalBlocker b(m_btnAddDisc);
+        m_btnAddDisc->setChecked(false);
+    }
+    m_videoLabel->unsetCursor();
+}
+
+void MainWindow::placeMarkerAt(int imgX, int imgY)
+{
+    if (m_pendingMarker == PendingMarker::None) return;
+    Marker m;
+    m.type    = (m_pendingMarker == PendingMarker::Player)
+                    ? QStringLiteral("player")
+                    : QStringLiteral("disc");
+    m.x       = imgX;
+    m.y       = imgY;
+    m.timeSec = m_positionSec;
+    m_markers.append(m);
+    cancelMarkerPlacement();
+    renderFrame();
+}
+
+void MainWindow::onClearMarkers()
+{
+    if (m_markers.isEmpty()) return;
+    m_markers.clear();
+    renderFrame();
+}
+
+void MainWindow::onToggleMarkersVisible(bool checked)
+{
+    m_markersVisible = checked;
+    renderFrame();
+}
+
+QString MainWindow::markersBaseDirForCurrentVideo() const
+{
+    if (m_lastSource.isEmpty()) return QString();
+    const QString base = QFileInfo(m_lastSource).completeBaseName();
+    return QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("LOCAL_DATA/configs/%1").arg(base));
+}
+
+QString MainWindow::nextMarkersPath() const
+{
+    if (m_lastSource.isEmpty()) return QString();
+    const QString base = QFileInfo(m_lastSource).completeBaseName();
+    QDir baseDir(QCoreApplication::applicationDirPath());
+    const QString sub = QStringLiteral("LOCAL_DATA/configs/%1").arg(base);
+    if (!baseDir.mkpath(sub)) return QString();
+    const QString stamp = QDateTime::currentDateTime()
+                              .toString(QStringLiteral("yyyyMMddHHmmss"));
+    return baseDir.filePath(QStringLiteral("%1/markers_%2.yml").arg(sub, stamp));
+}
+
+bool MainWindow::saveMarkersToFile(const QString &path)
+{
+    cv::FileStorage fs(path.toStdString(), cv::FileStorage::WRITE);
+    if (!fs.isOpened()) return false;
+    fs << "video"  << m_lastSource.toStdString();
+    fs << "count"  << m_markers.size();
+    fs << "markers" << "[";
+    for (const Marker &m : m_markers) {
+        fs << "{"
+           << "type" << m.type.toStdString()
+           << "x"    << m.x
+           << "y"    << m.y
+           << "time" << m.timeSec
+           << "}";
+    }
+    fs << "]";
+    fs.release();
+    return true;
+}
+
+bool MainWindow::loadMarkersFromFile(const QString &path)
+{
+    cv::FileStorage fs(path.toStdString(), cv::FileStorage::READ);
+    if (!fs.isOpened()) return false;
+
+    QVector<Marker> loaded;
+    cv::FileNode node = fs["markers"];
+    if (node.isSeq()) {
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            Marker m;
+            std::string type;
+            (*it)["type"] >> type;
+            m.type = QString::fromStdString(type);
+            (*it)["x"]    >> m.x;
+            (*it)["y"]    >> m.y;
+            (*it)["time"] >> m.timeSec;
+            if (m.type != QLatin1String("player") && m.type != QLatin1String("disc")) {
+                continue;
+            }
+            loaded.append(m);
+        }
+    }
+    fs.release();
+    m_markers = loaded;
+    return true;
+}
+
+void MainWindow::onSaveMarkers()
+{
+    if (m_lastSource.isEmpty()) {
+        QMessageBox::information(this, tr("Save Markers"),
+            tr("Open a video first — markers are stored per video."));
+        return;
+    }
+    if (m_markers.isEmpty()) {
+        QMessageBox::information(this, tr("Save Markers"),
+            tr("There are no markers to save."));
+        return;
+    }
+    const QString path = nextMarkersPath();
+    if (path.isEmpty() || !saveMarkersToFile(path)) {
+        QMessageBox::warning(this, tr("Save Markers"),
+            tr("Failed to write markers file."));
+        return;
+    }
+    statusBar()->showMessage(tr("Saved %1 markers to %2")
+                                 .arg(m_markers.size())
+                                 .arg(path),
+                             5000);
+}
+
+void MainWindow::onLoadMarkers()
+{
+    QString startDir = markersBaseDirForCurrentVideo();
+    if (startDir.isEmpty() || !QDir(startDir).exists()) {
+        startDir = QDir(QCoreApplication::applicationDirPath())
+                       .filePath(QStringLiteral("LOCAL_DATA/configs"));
+        if (!QDir(startDir).exists()) startDir = QDir::homePath();
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load markers"), startDir, tr("Markers (*.yml *.yaml)"));
+    if (path.isEmpty()) return;
+    if (!loadMarkersFromFile(path)) {
+        QMessageBox::warning(this, tr("Load Markers"),
+            tr("Failed to read markers file."));
+        return;
+    }
+    statusBar()->showMessage(tr("Loaded %1 markers from %2")
+                                 .arg(m_markers.size())
+                                 .arg(path),
+                             5000);
+    renderFrame();
 }
