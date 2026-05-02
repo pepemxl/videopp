@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QMetaType>
 #include <opencv2/opencv.hpp>
 #include "MainWindow.h"
@@ -7,7 +8,7 @@
 int main(int argc, char *argv[])
 {
     QCoreApplication::setOrganizationName("Pepe");
-    QCoreApplication::setApplicationName("PepeGolfDiscAnalyzer");
+    QCoreApplication::setApplicationName("PepeDGA");
 
     QApplication app(argc, argv);
 
@@ -15,6 +16,7 @@ int main(int argc, char *argv[])
 
     MainWindow w;
     w.resize(1200, 900);
+    w.setWindowIcon(QIcon(":/logo.png"));
     w.show();
 
     return app.exec();

@@ -42,3 +42,8 @@ win32 {
         LIBS += $$OPENCV_LIBS
     }
 }
+
+DISTFILES +=
+
+RESOURCES += \
+    recursos.qrc

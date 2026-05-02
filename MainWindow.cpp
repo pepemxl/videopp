@@ -40,7 +40,7 @@ constexpr double kZoomMin         = 1.0;    // fit-to-window is the floor
 constexpr double kZoomMax         = 6.0;
 constexpr int    kMaxRecent       = 10;
 constexpr int    kSliderMaxMs     = 1'000'000'000;  // ~11.5 days, safe upper bound
-constexpr double kMarkerWindowSec = 1.0;             // visible for this long after placement
+constexpr double kMarkerWindowSec = .5;             // visible for this long after placement
 const QString kRecentKey      = QStringLiteral("recentVideos");
 const QString kLastOpenDirKey = QStringLiteral("lastOpenDir");
 }
@@ -48,7 +48,7 @@ const QString kLastOpenDirKey = QStringLiteral("lastOpenDir");
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_processor(new VideoProcessor(this))
 {
-    setWindowTitle(tr("Pepe Golf Disc Analyzer"));
+    setWindowTitle(tr("Pepe DGA"));
 
     m_videoLabel = new QLabel(tr("Video display"));
     m_videoLabel->setAlignment(Qt::AlignCenter);
