@@ -306,16 +306,16 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ----- Filters menu -----
     QMenu *filtersMenu = menuBar()->addMenu(tr("F&ilters"));
-    auto *filterGroup = new QActionGroup(this);
-    filterGroup->setExclusive(true);
+    m_filterGroup = new QActionGroup(this);
+    m_filterGroup->setExclusive(true);
     for (int t = Filters::None; t < Filters::Count; ++t) {
         QAction *act = filtersMenu->addAction(Filters::displayName(t));
         act->setCheckable(true);
         act->setData(t);
         if (t == Filters::None) act->setChecked(true);
-        filterGroup->addAction(act);
+        m_filterGroup->addAction(act);
     }
-    connect(filterGroup, &QActionGroup::triggered, this,
+    connect(m_filterGroup, &QActionGroup::triggered, this,
             [this](QAction *a) { onFilterSelected(a->data().toInt()); });
 
     // ----- Buttons -----
@@ -449,6 +449,38 @@ void MainWindow::rebuildCurrentFrame()
 void MainWindow::onFilterSelected(int filterType)
 {
     if (filterType < Filters::None || filterType >= Filters::Count) return;
+    if (filterType == m_filter) return;
+
+    // Warn before enabling computationally expensive filters.
+    const bool isHeavy = (filterType == Filters::Vignette
+                          || filterType == Filters::Stylization
+                          || filterType == Filters::DetailEnhance);
+    if (isHeavy) {
+        const QString name = Filters::displayName(filterType);
+        const auto btn = QMessageBox::warning(
+            this,
+            tr("Filter requires significant resources"),
+            tr("The \"%1\" filter is computationally expensive and is "
+               "intended for systems with GPU acceleration or substantial "
+               "CPU headroom.\n\nApplying it during playback may cause "
+               "stutter, lag, or dropped frames.\n\nContinue?").arg(name),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (btn != QMessageBox::Yes) {
+            // Revert the menu selection to the previously active filter.
+            if (m_filterGroup) {
+                for (QAction *a : m_filterGroup->actions()) {
+                    if (a->data().toInt() == m_filter) {
+                        QSignalBlocker b(m_filterGroup);
+                        a->setChecked(true);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     m_filter = filterType;
     // Worker only needs the filter for the recording path; it emits raw frames.
     m_processor->setFilter(filterType);
@@ -1243,10 +1275,17 @@ QWidget *MainWindow::buildLeftSidebar()
     editRow->addWidget(m_btnToggleType);
     editRow->addWidget(m_btnMoveMarker);
     cv->addLayout(editRow);
+    connect(m_markerList, &QListWidget::itemClicked,
+            this, &MainWindow::onMarkerListActivated);
     connect(m_markerList, &QListWidget::itemActivated,
             this, &MainWindow::onMarkerListActivated);
     connect(m_markerList, &QListWidget::itemDoubleClicked,
             this, &MainWindow::onMarkerListActivated);
+    // Cover keyboard navigation (arrow keys) too — fires when the row changes.
+    connect(m_markerList, &QListWidget::currentItemChanged,
+            this, [this](QListWidgetItem *current, QListWidgetItem *) {
+                onMarkerListActivated(current);
+            });
     connect(m_btnDeleteMarker, &QPushButton::clicked,
             this, &MainWindow::onDeleteSelectedMarker);
     connect(m_btnToggleType, &QPushButton::clicked,
@@ -1464,6 +1503,9 @@ void MainWindow::setPoseJointAngles(const QVector<QPair<QString, double>> &angle
 void MainWindow::refreshMarkerList()
 {
     if (!m_markerList) return;
+    // Block signals so the rebuild doesn't trigger spurious seeks via the
+    // currentItemChanged / itemClicked connections.
+    QSignalBlocker block(m_markerList);
     const int prev = m_markerList->currentRow();
     m_markerList->clear();
     for (int i = 0; i < m_markers.size(); ++i) {

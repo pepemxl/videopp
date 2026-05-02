@@ -27,6 +27,7 @@ struct ShotMetadata
     QString hole;
 };
 
+class QActionGroup;
 class QComboBox;
 class QLineEdit;
 class QListWidget;
@@ -159,6 +160,7 @@ private:
 
     QAction      *m_actRecord;
     QAction      *m_actShowMarkers;
+    QActionGroup *m_filterGroup{nullptr};
     QMenu        *m_recentMenu;
     QAction      *m_clearRecentAction;
 
