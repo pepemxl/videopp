@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "IconManager.h"
 #include <cmath>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -9,19 +10,26 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeySequence>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTime>
 #include <QVBoxLayout>
@@ -65,28 +73,94 @@ MainWindow::MainWindow(QWidget *parent)
     m_scrollArea->viewport()->installEventFilter(this);
     m_scrollArea->installEventFilter(this);
 
-    m_btnStartFile = new QPushButton(tr("Start from file"));
-    m_btnStartCam  = new QPushButton(tr("Start from camera"));
-    m_btnStop      = new QPushButton(tr("Stop"));
-    m_btnRestart   = new QPushButton(tr("Restart"));
-    m_btnBackward  = new QPushButton(tr("<< -5s"));
-    m_btnPlayPause = new QPushButton(tr("Pause"));
-    m_btnForward   = new QPushButton(tr("+5s >>"));
-    m_btnRecord    = new QPushButton(tr("Record"));
+    // Create Buttons
+    //m_btnStartFile = new QPushButton(tr("Start from file"));
+    m_btnStartFile = new QPushButton(this);
+    m_btnStartFile->setIcon(IconManager::instance().getIcon("open"));
+    m_btnStartFile->setIconSize(QSize(48, 48));
+    m_btnStartFile->setFixedSize(70, 70);
+    m_btnStartFile->setToolTip("Haz clic para abrir archivo");
+    m_btnStartFile->setFocusPolicy(Qt::NoFocus);
+    //m_btnStartCam  = new QPushButton(tr("Start from camera"));
+    m_btnStartCam = new QPushButton(this);
+    m_btnStartCam->setIcon(IconManager::instance().getIcon("camera"));
+    m_btnStartCam->setIconSize(QSize(48, 48));
+    m_btnStartCam->setFixedSize(70, 70);
+    m_btnStartCam->setToolTip("Haz clic para capturar desde camara");
+    m_btnStartCam->setFocusPolicy(Qt::NoFocus);
+    //m_btnStop      = new QPushButton(tr("Stop"));
+    m_btnStop = new QPushButton(this);
+    m_btnStop->setIcon(IconManager::instance().getIcon("stop"));
+    m_btnStop->setIconSize(QSize(48, 48));
+    m_btnStop->setFixedSize(70, 70);
+    m_btnStop->setToolTip("Haz clic para parar");
+    m_btnStop->setFocusPolicy(Qt::NoFocus);
+    //m_btnRestart   = new QPushButton(tr("Restart"));
+    m_btnRestart = new QPushButton(this);
+    m_btnRestart->setIcon(IconManager::instance().getIcon("repeat"));
+    m_btnRestart->setIconSize(QSize(48, 48));
+    m_btnRestart->setFixedSize(70, 70);
+    m_btnRestart->setToolTip("Haz clic para restart");
+    m_btnRestart->setFocusPolicy(Qt::NoFocus);
+    //m_btnBackward  = new QPushButton(tr("<< -5s"));
+    m_btnBackward = new QPushButton(this);
+    m_btnBackward->setIcon(IconManager::instance().getIcon("backward"));
+    m_btnBackward->setIconSize(QSize(48, 48));
+    m_btnBackward->setFixedSize(70, 70);
+    m_btnBackward->setToolTip("Haz clic para -5s rewind");
+    m_btnBackward->setFocusPolicy(Qt::NoFocus);
+    //m_btnPlayPause = new QPushButton(tr("Pause"));
+    m_btnPlayPause = new QPushButton(this);
+    //m_btnPlayPause->setIcon(QIcon(":/iconos/icono_play.png"));
+    m_btnPlayPause->setIcon(IconManager::instance().getIcon("pause"));
+    m_btnPlayPause->setIconSize(QSize(48, 48));
+    m_btnPlayPause->setFixedSize(70, 70);
+    m_btnPlayPause->setToolTip("Haz clic para reproducir");
+    m_btnPlayPause->setFocusPolicy(Qt::NoFocus);
+
+    //m_btnForward   = new QPushButton(tr("+5s >>"));
+    m_btnForward = new QPushButton(this);
+    m_btnForward->setIcon(IconManager::instance().getIcon("forward"));
+    m_btnForward->setIconSize(QSize(48, 48));
+    m_btnForward->setFixedSize(70, 70);
+    m_btnForward->setToolTip("Haz clic para +5s forward");
+    m_btnForward->setFocusPolicy(Qt::NoFocus);
+    //m_btnRecord    = new QPushButton(tr("Record"));
+    m_btnRecord = new QPushButton(this);
+    m_btnRecord->setIcon(IconManager::instance().getIcon("record"));
+    m_btnRecord->setIconSize(QSize(48, 48));
+    m_btnRecord->setFixedSize(70, 70);
+    m_btnRecord->setToolTip("Haz clic para grabar fragmento");
+    m_btnRecord->setFocusPolicy(Qt::NoFocus);
     m_btnRecord->setCheckable(true);
     m_formatCombo  = new QComboBox;
-    m_formatCombo->addItems({QStringLiteral("avi"),
-                             QStringLiteral("mp4"),
+    m_formatCombo->addItems({QStringLiteral("mp4"),
+                             QStringLiteral("avi"),
                              QStringLiteral("mkv")});
     m_formatCombo->setToolTip(tr("Recording container format"));
 
-    m_btnAddPlayer    = new QPushButton(tr("Add Player Marker"));
+    //m_btnAddPlayer    = new QPushButton(tr("Add Player Marker"));
+    m_btnAddPlayer = new QPushButton(this);
+    m_btnAddPlayer->setIcon(IconManager::instance().getIcon("player"));
+    m_btnAddPlayer->setIconSize(QSize(48, 48));
+    m_btnAddPlayer->setFixedSize(70, 70);
+    m_btnAddPlayer->setToolTip("Haz clic para agregar player markers");
+    m_btnAddPlayer->setFocusPolicy(Qt::NoFocus);
     m_btnAddPlayer->setCheckable(true);
-    m_btnAddPlayer->setToolTip(tr("Click, then click on the video to place a player marker"));
-    m_btnAddDisc      = new QPushButton(tr("Add Disc Marker"));
+    //m_btnAddDisc      = new QPushButton(tr("Add Disc Marker"));
+    m_btnAddDisc = new QPushButton(this);
+    m_btnAddDisc->setIcon(IconManager::instance().getIcon("disc"));
+    m_btnAddDisc->setIconSize(QSize(48, 48));
+    m_btnAddDisc->setFixedSize(70, 70);
+    m_btnAddDisc->setToolTip("Haz clic para agregar disc markers");
+    m_btnAddDisc->setFocusPolicy(Qt::NoFocus);
     m_btnAddDisc->setCheckable(true);
-    m_btnAddDisc->setToolTip(tr("Click, then click on the video to place a disc marker"));
-    m_btnSaveMarkers  = new QPushButton(tr("Save Markers"));
+    //m_btnSaveMarkers  = new QPushButton(tr("Save Markers"));
+    m_btnSaveMarkers = new QPushButton(this);
+    m_btnSaveMarkers->setIcon(IconManager::instance().getIcon("save"));
+    m_btnSaveMarkers->setIconSize(QSize(48, 48));
+    m_btnSaveMarkers->setFixedSize(70, 70);
+    m_btnSaveMarkers->setFocusPolicy(Qt::NoFocus);
     m_btnSaveMarkers->setToolTip(tr("Save current markers to LOCAL_DATA/configs/<video>/"));
 
     m_speedLabel   = new QLabel(tr("Speed: 1.00x"));
@@ -105,36 +179,47 @@ MainWindow::MainWindow(QWidget *parent)
     seekRow->addWidget(m_timeLabel);
 
     auto sourceRow = new QHBoxLayout;
-    sourceRow->addWidget(m_btnStartFile);
+    sourceRow->addStretch();
     sourceRow->addWidget(m_btnStartCam);
-    sourceRow->addWidget(m_btnStop);
-    sourceRow->addWidget(m_btnRestart);
+    sourceRow->addWidget(m_btnStartFile);
 
     auto playbackRow = new QHBoxLayout;
+    playbackRow->addStretch();
     playbackRow->addWidget(m_btnBackward);
     playbackRow->addWidget(m_btnPlayPause);
+    playbackRow->addWidget(m_btnStop);
     playbackRow->addWidget(m_btnForward);
+    playbackRow->addWidget(m_btnRestart);
+    playbackRow->addStretch();
     playbackRow->addWidget(m_btnRecord);
     playbackRow->addWidget(m_formatCombo);
-    playbackRow->addStretch();
     playbackRow->addWidget(m_speedLabel);
 
-    auto markersRow = new QHBoxLayout;
-    markersRow->addWidget(m_btnAddPlayer);
-    markersRow->addWidget(m_btnAddDisc);
-    markersRow->addWidget(m_btnSaveMarkers);
-    markersRow->addStretch();
+    auto centerLayout = new QVBoxLayout;
+    centerLayout->addWidget(m_scrollArea, 1);
+    centerLayout->addLayout(seekRow);
+    centerLayout->addLayout(playbackRow);
+    centerLayout->addLayout(sourceRow);
 
-    auto layout = new QVBoxLayout;
-    layout->addWidget(m_scrollArea, 1);
-    layout->addLayout(seekRow);
-    layout->addLayout(sourceRow);
-    layout->addLayout(playbackRow);
-    layout->addLayout(markersRow);
+    auto centerWidget = new QWidget;
+    centerWidget->setLayout(centerLayout);
 
-    auto central = new QWidget;
-    central->setLayout(layout);
-    setCentralWidget(central);
+    QWidget *leftSidebar  = buildLeftSidebar();
+    QWidget *rightSidebar = buildRightSidebar();
+
+    auto splitter = new QSplitter(Qt::Horizontal);
+    splitter->addWidget(leftSidebar);
+    splitter->addWidget(centerWidget);
+    splitter->addWidget(rightSidebar);
+    splitter->setCollapsible(0, true);
+    splitter->setCollapsible(1, false);
+    splitter->setCollapsible(2, true);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+    splitter->setStretchFactor(2, 0);
+    splitter->setSizes({260, 800, 260});
+
+    setCentralWidget(splitter);
 
     // ----- File menu -----
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
@@ -408,6 +493,7 @@ void MainWindow::startFile(const QString &path, double startSec)
     // Markers are per-video — drop session markers when the source changes.
     if (m_lastSource != path) {
         m_markers.clear();
+        clearMetadataForm();
     }
     m_processor->setSource(path, VideoProcessor::FromFile);
     m_processor->setStartPositionSec(startSec);
@@ -416,7 +502,8 @@ void MainWindow::startFile(const QString &path, double startSec)
     m_isFileSource = true;
     m_durationSec = 0.0;
     m_positionSec = startSec;
-    m_btnPlayPause->setText(tr("Pause"));
+    //m_btnPlayPause->setText(tr("Pause"));
+    m_btnPlayPause->setIcon(IconManager::instance().getIcon("pause"));
     {
         QSignalBlocker b(m_seekSlider);
         m_seekSlider->setRange(0, 0);
@@ -425,6 +512,7 @@ void MainWindow::startFile(const QString &path, double startSec)
     updateTimeLabel();
     m_processor->start();
     addToRecent(path);
+    refreshMarkerFileList();
     updatePlaybackControls();
 }
 
@@ -493,7 +581,12 @@ void MainWindow::onPlayPause()
     if (!m_isFileSource) return;
     const bool nowPaused = !m_processor->isPaused();
     m_processor->setPaused(nowPaused);
-    m_btnPlayPause->setText(nowPaused ? tr("Play") : tr("Pause"));
+    //m_btnPlayPause->setText(nowPaused ? tr("Play") : tr("Pause"));
+    if (nowPaused) {
+        m_btnPlayPause->setIcon(IconManager::instance().getIcon("play"));
+    } else {
+        m_btnPlayPause->setIcon(IconManager::instance().getIcon("pause"));
+    }
 }
 
 void MainWindow::onSeekForward()
@@ -659,7 +752,18 @@ void MainWindow::onRecordingChanged(bool recording)
     QSignalBlocker ba(m_actRecord);
     m_btnRecord->setChecked(recording);
     m_actRecord->setChecked(recording);
-    m_btnRecord->setText(recording ? tr("Stop Recording") : tr("Record"));
+    m_btnRecord->setIcon(IconManager::instance().getIcon(
+        recording ? "stop" : "record"));
+    m_btnRecord->setToolTip(recording
+        ? tr("Haz clic para detener la grabación")
+        : tr("Haz clic para grabar fragmento"));
+    if (recording) {
+        m_btnRecord->setStyleSheet(
+            QStringLiteral("QPushButton { background-color: #d62828; }"
+                           "QPushButton:hover { background-color: #e63946; }"));
+    } else {
+        m_btnRecord->setStyleSheet(QString());
+    }
 }
 
 void MainWindow::onDurationChanged(double seconds)
@@ -715,7 +819,9 @@ void MainWindow::onProcessorFinished()
         if (pos > 0.0) m_lastPosSec = pos;
     }
     m_isFileSource = false;
-    m_btnPlayPause->setText(tr("Play"));
+    //m_btnPlayPause->setText(tr("Play"));
+    //m_btnPlayPause->setIcon(QIcon::fromTheme("media-playback-start"));
+    m_btnPlayPause->setIcon(IconManager::instance().getIcon("play"));
     updatePlaybackControls();
 }
 
@@ -736,7 +842,9 @@ void MainWindow::updatePlaybackControls()
     m_btnRecord->setEnabled(running);
     if (m_actRecord) m_actRecord->setEnabled(running);
     if (m_seekSlider) m_seekSlider->setEnabled(fileActive && m_durationSec > 0.0);
-    if (canResume) m_btnPlayPause->setText(tr("Play"));
+    //if (canResume) m_btnPlayPause->setText(tr("Play"));
+    //if (canResume) m_btnPlayPause->setIcon(QIcon::fromTheme("media-playback-start"));
+    if (canResume) m_btnPlayPause->setIcon(IconManager::instance().getIcon("play"));
 }
 
 void MainWindow::updateSpeedLabel()
@@ -931,8 +1039,14 @@ bool MainWindow::saveMarkersToFile(const QString &path)
 {
     cv::FileStorage fs(path.toStdString(), cv::FileStorage::WRITE);
     if (!fs.isOpened()) return false;
-    fs << "video"  << m_lastSource.toStdString();
-    fs << "count"  << m_markers.size();
+    const ShotMetadata meta = currentMetadataFromForm();
+    fs << "video"        << m_lastSource.toStdString();
+    fs << "player"       << meta.playerName.toStdString();
+    fs << "pdga"         << meta.pdgaNumber.toStdString();
+    fs << "course"       << meta.courseName.toStdString();
+    fs << "courseLayout" << meta.courseLayout.toStdString();
+    fs << "hole"         << meta.hole.toStdString();
+    fs << "count"        << m_markers.size();
     fs << "markers" << "[";
     for (const Marker &m : m_markers) {
         fs << "{"
@@ -969,6 +1083,21 @@ bool MainWindow::loadMarkersFromFile(const QString &path)
             loaded.append(m);
         }
     }
+
+    auto readStr = [&fs](const char *key, QString &out) {
+        cv::FileNode n = fs[key];
+        if (n.empty() || !n.isString()) return;
+        std::string s; n >> s;
+        out = QString::fromStdString(s);
+    };
+    ShotMetadata meta;
+    readStr("player",       meta.playerName);
+    readStr("pdga",         meta.pdgaNumber);
+    readStr("course",       meta.courseName);
+    readStr("courseLayout", meta.courseLayout);
+    readStr("hole",         meta.hole);
+    applyMetadataToForm(meta);
+
     fs.release();
     m_markers = loaded;
     return true;
@@ -996,6 +1125,7 @@ void MainWindow::onSaveMarkers()
                                  .arg(m_markers.size())
                                  .arg(path),
                              5000);
+    refreshMarkerFileList();
 }
 
 void MainWindow::onLoadMarkers()
@@ -1019,4 +1149,223 @@ void MainWindow::onLoadMarkers()
                                  .arg(path),
                              5000);
     renderFrame();
+}
+
+// ---------- Sidebars ----------
+
+QWidget *MainWindow::buildLeftSidebar()
+{
+    auto *root = new QWidget;
+    auto *vbox = new QVBoxLayout(root);
+    vbox->setContentsMargins(6, 6, 6, 6);
+
+    auto *grpMarkers = new QGroupBox(tr("Markers"));
+    auto *gv = new QVBoxLayout(grpMarkers);
+    gv->addWidget(m_btnAddPlayer);
+    gv->addWidget(m_btnAddDisc);
+    gv->addWidget(m_btnSaveMarkers);
+    vbox->addWidget(grpMarkers);
+
+    auto *grpMeta = new QGroupBox(tr("Shot Metadata"));
+    auto *form = new QFormLayout(grpMeta);
+    m_edPlayerName   = new QLineEdit;
+    m_edPdgaNumber   = new QLineEdit;
+    m_edPdgaNumber->setPlaceholderText(tr("e.g. 12345"));
+    m_edCourseName   = new QLineEdit;
+    m_edCourseLayout = new QLineEdit;
+    m_spHole         = new QSpinBox;
+    m_spHole->setRange(0, 99);
+    m_spHole->setSpecialValueText(tr("—"));
+    form->addRow(tr("Player:"),       m_edPlayerName);
+    form->addRow(tr("PDGA #:"),       m_edPdgaNumber);
+    form->addRow(tr("Course:"),       m_edCourseName);
+    form->addRow(tr("Course layout:"),m_edCourseLayout);
+    form->addRow(tr("Hole:"),         m_spHole);
+    vbox->addWidget(grpMeta);
+
+    auto *grpFiles = new QGroupBox(tr("Marker Files"));
+    auto *fv = new QVBoxLayout(grpFiles);
+    m_markerFileList = new QListWidget;
+    m_markerFileList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_markerFileList->setToolTip(tr("Double-click a file to load its markers"));
+    fv->addWidget(m_markerFileList);
+    connect(m_markerFileList, &QListWidget::itemActivated,
+            this, &MainWindow::onMarkerFileActivated);
+    connect(m_markerFileList, &QListWidget::itemDoubleClicked,
+            this, &MainWindow::onMarkerFileActivated);
+    vbox->addWidget(grpFiles, 1);
+
+    return root;
+}
+
+QWidget *MainWindow::buildRightSidebar()
+{
+    auto *root = new QWidget;
+    auto *vbox = new QVBoxLayout(root);
+    vbox->setContentsMargins(6, 6, 6, 6);
+
+    auto *grpFlight = new QGroupBox(tr("Flight Telemetry"));
+    auto *form = new QFormLayout(grpFlight);
+    m_lblSpin     = new QLabel(QStringLiteral("—"));
+    m_lblNose     = new QLabel(QStringLiteral("—"));
+    m_lblApex     = new QLabel(QStringLiteral("—"));
+    m_lblDistance = new QLabel(QStringLiteral("—"));
+    form->addRow(tr("Spin:"),     m_lblSpin);
+    form->addRow(tr("Nose:"),     m_lblNose);
+    form->addRow(tr("Apex:"),     m_lblApex);
+    form->addRow(tr("Distance:"), m_lblDistance);
+    vbox->addWidget(grpFlight);
+
+    auto *grpPose = new QGroupBox(tr("Pose Joint Angles"));
+    auto *pv = new QVBoxLayout(grpPose);
+    m_poseJointList = new QListWidget;
+    m_poseJointList->setSelectionMode(QAbstractItemView::NoSelection);
+    pv->addWidget(m_poseJointList);
+    vbox->addWidget(grpPose, 1);
+
+    return root;
+}
+
+// ---------- Marker file list ----------
+
+void MainWindow::refreshMarkerFileList()
+{
+    if (!m_markerFileList) return;
+    m_markerFileList->clear();
+    const QString dir = markersBaseDirForCurrentVideo();
+    if (dir.isEmpty() || !QDir(dir).exists()) return;
+
+    QDir d(dir);
+    const QStringList filters{QStringLiteral("markers_*.yml"),
+                              QStringLiteral("markers_*.yaml")};
+    QFileInfoList files = d.entryInfoList(filters,
+                                          QDir::Files | QDir::NoDotAndDotDot,
+                                          QDir::Time);
+    static const QRegularExpression stampRe(
+        QStringLiteral("^markers_(\\d{8})(\\d{6})$"));
+    for (const QFileInfo &fi : files) {
+        QString display;
+        const auto m = stampRe.match(fi.completeBaseName());
+        if (m.hasMatch()) {
+            const QString date = m.captured(1);  // YYYYMMDD
+            const QString tm   = m.captured(2);  // HHMMSS
+            display = QStringLiteral("%1 - %2:%3:%4")
+                          .arg(date, tm.left(2), tm.mid(2, 2), tm.right(2));
+        } else {
+            display = fi.fileName();  // unrecognized format — show raw name
+        }
+
+        // Pull the player name out of the YAML so it can be appended.
+        QString playerName;
+        cv::FileStorage fs(fi.absoluteFilePath().toStdString(),
+                           cv::FileStorage::READ);
+        if (fs.isOpened()) {
+            cv::FileNode n = fs["player"];
+            if (!n.empty() && n.isString()) {
+                std::string s; n >> s;
+                playerName = QString::fromStdString(s).trimmed();
+            }
+            fs.release();
+        }
+        if (!playerName.isEmpty()) {
+            display = QStringLiteral("%1 - %2").arg(display, playerName);
+        }
+
+        auto *item = new QListWidgetItem(display);
+        item->setData(Qt::UserRole, fi.absoluteFilePath());
+        item->setToolTip(fi.absoluteFilePath());
+        m_markerFileList->addItem(item);
+    }
+}
+
+void MainWindow::onMarkerFileActivated(QListWidgetItem *item)
+{
+    if (!item) return;
+    const QString path = item->data(Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+    if (!loadMarkersFromFile(path)) {
+        QMessageBox::warning(this, tr("Load Markers"),
+            tr("Failed to read markers file."));
+        return;
+    }
+    statusBar()->showMessage(tr("Loaded %1 markers from %2")
+                                 .arg(m_markers.size())
+                                 .arg(path),
+                             5000);
+    renderFrame();
+}
+
+// ---------- Metadata form ----------
+
+ShotMetadata MainWindow::currentMetadataFromForm() const
+{
+    ShotMetadata meta;
+    if (m_edPlayerName)   meta.playerName   = m_edPlayerName->text().trimmed();
+    if (m_edPdgaNumber)   meta.pdgaNumber   = m_edPdgaNumber->text().trimmed();
+    if (m_edCourseName)   meta.courseName   = m_edCourseName->text().trimmed();
+    if (m_edCourseLayout) meta.courseLayout = m_edCourseLayout->text().trimmed();
+    if (m_spHole && m_spHole->value() > 0) {
+        meta.hole = QString::number(m_spHole->value());
+    }
+    return meta;
+}
+
+void MainWindow::applyMetadataToForm(const ShotMetadata &meta)
+{
+    if (m_edPlayerName)   m_edPlayerName->setText(meta.playerName);
+    if (m_edPdgaNumber)   m_edPdgaNumber->setText(meta.pdgaNumber);
+    if (m_edCourseName)   m_edCourseName->setText(meta.courseName);
+    if (m_edCourseLayout) m_edCourseLayout->setText(meta.courseLayout);
+    if (m_spHole) {
+        bool ok = false;
+        const int v = meta.hole.toInt(&ok);
+        m_spHole->setValue(ok ? v : 0);
+    }
+}
+
+void MainWindow::clearMetadataForm()
+{
+    applyMetadataToForm(ShotMetadata{});
+}
+
+// ---------- Telemetry ----------
+
+void MainWindow::clearTelemetry()
+{
+    if (m_lblSpin)     m_lblSpin->setText(QStringLiteral("—"));
+    if (m_lblNose)     m_lblNose->setText(QStringLiteral("—"));
+    if (m_lblApex)     m_lblApex->setText(QStringLiteral("—"));
+    if (m_lblDistance) m_lblDistance->setText(QStringLiteral("—"));
+    if (m_poseJointList) m_poseJointList->clear();
+}
+
+void MainWindow::setSpinRpm(double rpm)
+{
+    if (m_lblSpin) m_lblSpin->setText(tr("%1 rpm").arg(rpm, 0, 'f', 0));
+}
+
+void MainWindow::setNoseDeg(double degrees)
+{
+    if (m_lblNose) m_lblNose->setText(tr("%1°").arg(degrees, 0, 'f', 1));
+}
+
+void MainWindow::setApexMeters(double meters)
+{
+    if (m_lblApex) m_lblApex->setText(tr("%1 m").arg(meters, 0, 'f', 2));
+}
+
+void MainWindow::setDistanceMeters(double meters)
+{
+    if (m_lblDistance) m_lblDistance->setText(tr("%1 m").arg(meters, 0, 'f', 1));
+}
+
+void MainWindow::setPoseJointAngles(const QVector<QPair<QString, double>> &angles)
+{
+    if (!m_poseJointList) return;
+    m_poseJointList->clear();
+    for (const auto &p : angles) {
+        m_poseJointList->addItem(QStringLiteral("%1: %2°")
+                                     .arg(p.first)
+                                     .arg(p.second, 0, 'f', 1));
+    }
 }

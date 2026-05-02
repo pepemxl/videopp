@@ -18,10 +18,23 @@ struct Marker
     double  timeSec{0.0};
 };
 
+struct ShotMetadata
+{
+    QString playerName;
+    QString pdgaNumber;
+    QString courseName;
+    QString courseLayout;
+    QString hole;
+};
+
 class QComboBox;
+class QLineEdit;
+class QListWidget;
+class QListWidgetItem;
 class QMenu;
 class QScrollArea;
 class QSlider;
+class QSpinBox;
 
 class MainWindow : public QMainWindow
 {
@@ -65,6 +78,7 @@ private slots:
     void onLoadMarkers();
     void onClearMarkers();
     void onToggleMarkersVisible(bool checked);
+    void onMarkerFileActivated(QListWidgetItem *item);
 
 private:
     void updatePlaybackControls();
@@ -81,6 +95,21 @@ private:
     QString markersBaseDirForCurrentVideo() const;
     void zoomBy(double factor, QPointF viewportFocus);
     void drawMarkersOnPixmap(QPixmap &pix) const;
+    QWidget *buildLeftSidebar();
+    QWidget *buildRightSidebar();
+    void refreshMarkerFileList();
+    ShotMetadata currentMetadataFromForm() const;
+    void applyMetadataToForm(const ShotMetadata &meta);
+    void clearMetadataForm();
+    void clearTelemetry();
+public:
+    // Telemetry setters — wire these up when an analysis pipeline lands.
+    void setSpinRpm(double rpm);
+    void setNoseDeg(double degrees);
+    void setApexMeters(double meters);
+    void setDistanceMeters(double meters);
+    void setPoseJointAngles(const QVector<QPair<QString, double>> &angles);
+private:
     void placeMarkerAt(int imgX, int imgY);
     void cancelMarkerPlacement();
     bool saveMarkersToFile(const QString &path);
@@ -103,6 +132,17 @@ private:
     QPushButton  *m_btnAddPlayer;
     QPushButton  *m_btnAddDisc;
     QPushButton  *m_btnSaveMarkers;
+    QListWidget  *m_markerFileList;
+    QLineEdit    *m_edPlayerName;
+    QLineEdit    *m_edPdgaNumber;
+    QLineEdit    *m_edCourseName;
+    QLineEdit    *m_edCourseLayout;
+    QSpinBox     *m_spHole;
+    QLabel       *m_lblSpin;
+    QLabel       *m_lblNose;
+    QLabel       *m_lblApex;
+    QLabel       *m_lblDistance;
+    QListWidget  *m_poseJointList;
     QLabel       *m_speedLabel;
 
     QAction      *m_actGrayscale;

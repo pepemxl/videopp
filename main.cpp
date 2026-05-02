@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
     qRegisterMetaType<cv::Mat>("cv::Mat");
 
     MainWindow w;
-    w.resize(1200, 900);
+    w.resize(1920, 1080);
     w.setWindowIcon(QIcon(":/logo.png"));
     w.show();
 
