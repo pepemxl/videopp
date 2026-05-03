@@ -45,6 +45,10 @@ struct Config
 
     static Config loadFromFile(const std::string& path);
     void resolveRelativePaths(const std::string& configFilePath);
+
+    // Inserts `_<timestamp>` (e.g. _20260503_152200) before the extension
+    // of every output path that's set. Inputs are left untouched.
+    void stampOutputPaths(const std::string& timestamp);
 };
 
 }  // namespace player_tracker

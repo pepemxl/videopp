@@ -24,6 +24,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
+#include <QPlainTextEdit>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -32,12 +34,18 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStandardPaths>
 #include <QStatusBar>
+#include <QTextStream>
 #include <QTime>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QImage>
 #include <QPixmap>
+#include <QtMath>
+#include <QHash>
+#include <stdexcept>
+#include <opencv2/core/persistence.hpp>
 #include <QWheelEvent>
 
 namespace {
@@ -1068,6 +1076,7 @@ void MainWindow::placeMarkerAt(int imgX, int imgY)
         if (m_pendingMoveIndex >= 0 && m_pendingMoveIndex < m_markers.size()) {
             m_markers[m_pendingMoveIndex].x = imgX;
             m_markers[m_pendingMoveIndex].y = imgY;
+            m_markersDirty = true;
         }
         cancelMarkerPlacement();
         refreshMarkerList();
@@ -1083,6 +1092,7 @@ void MainWindow::placeMarkerAt(int imgX, int imgY)
     m.y       = imgY;
     m.timeSec = m_positionSec;
     m_markers.append(m);
+    m_markersDirty = true;
     cancelMarkerPlacement();
     refreshMarkerList();
     renderFrame();
@@ -1092,6 +1102,7 @@ void MainWindow::onClearMarkers()
 {
     if (m_markers.isEmpty()) return;
     m_markers.clear();
+    m_markersDirty = false;   // nothing left to save
     refreshMarkerList();
     renderFrame();
 }
@@ -1145,6 +1156,7 @@ bool MainWindow::saveMarkersToFile(const QString &path)
     }
     fs << "]";
     fs.release();
+    m_markersDirty = false;
     return true;
 }
 
@@ -1187,6 +1199,7 @@ bool MainWindow::loadMarkersFromFile(const QString &path)
 
     fs.release();
     m_markers = loaded;
+    m_markersDirty = false;
     refreshMarkerList();
     return true;
 }
@@ -1351,7 +1364,88 @@ QWidget *MainWindow::buildRightSidebar()
     pv->addWidget(m_poseJointList);
     vbox->addWidget(grpPose, 1);
 
+    buildSubservicesGroup(vbox);
+
     return root;
+}
+
+void MainWindow::buildSubservicesGroup(QVBoxLayout *parent)
+{
+    auto *grp = new QGroupBox(tr("Subservices"));
+    auto *gv  = new QVBoxLayout(grp);
+
+    auto makeRow = [](QPushButton *gen, QPushButton *run) {
+        auto *h = new QHBoxLayout;
+        h->setContentsMargins(0, 0, 0, 0);
+        h->addWidget(gen, 1);
+        h->addWidget(run, 1);
+        return h;
+    };
+
+    m_btnGenDiscCfg        = new QPushButton(tr("Gen disc cfg"));
+    m_btnRunDisc           = new QPushButton(tr("Run disc tracker"));
+    m_btnGenPlayerCfg      = new QPushButton(tr("Gen player cfg"));
+    m_btnRunPlayer         = new QPushButton(tr("Run player tracker"));
+    m_btnGenHighlighterCfg = new QPushButton(tr("Gen highlighter cfg"));
+    m_btnRunHighlighter    = new QPushButton(tr("Run highlighter"));
+    m_btnLoadStats         = new QPushButton(tr("Load stats from CSV..."));
+
+    m_btnGenDiscCfg->setToolTip(
+        tr("Auto-save markers if dirty, then write a YAML config\n"
+           "for disc_tracker into LOCAL_DATA/configs/<video>/."));
+    m_btnGenPlayerCfg->setToolTip(
+        tr("Auto-save markers, then write a YAML config for player_tracker."));
+    m_btnGenHighlighterCfg->setToolTip(
+        tr("Write a YAML config for player_highlighter pointing at the\n"
+           "most recent player_tracker CSV for this video."));
+    m_btnRunDisc->setToolTip(
+        tr("Spawn disc_tracker with the most recent generated config."));
+    m_btnRunPlayer->setToolTip(
+        tr("Spawn player_tracker with the most recent generated config."));
+    m_btnRunHighlighter->setToolTip(
+        tr("Spawn player_highlighter with the most recent generated config."));
+    m_btnLoadStats->setToolTip(
+        tr("Pick a player_tracker CSV and compute joint angles\n"
+           "(elbows, shoulders, knees) into the Pose panel above."));
+
+    // Run buttons start disabled — enabled once a config has been generated.
+    m_btnRunDisc->setEnabled(false);
+    m_btnRunPlayer->setEnabled(false);
+    m_btnRunHighlighter->setEnabled(false);
+
+    gv->addLayout(makeRow(m_btnGenDiscCfg,        m_btnRunDisc));
+    gv->addLayout(makeRow(m_btnGenPlayerCfg,      m_btnRunPlayer));
+    gv->addLayout(makeRow(m_btnGenHighlighterCfg, m_btnRunHighlighter));
+    gv->addWidget(m_btnLoadStats);
+
+    m_subserviceLog = new QPlainTextEdit;
+    m_subserviceLog->setReadOnly(true);
+    m_subserviceLog->setPlaceholderText(
+        tr("Subservice output and config-generation messages appear here."));
+    m_subserviceLog->setMaximumBlockCount(2000);
+    QFont mono = m_subserviceLog->font();
+    mono.setStyleHint(QFont::Monospace);
+    mono.setFamily(QStringLiteral("Consolas"));
+    m_subserviceLog->setFont(mono);
+    m_subserviceLog->setMinimumHeight(140);
+    gv->addWidget(m_subserviceLog, 1);
+
+    connect(m_btnGenDiscCfg,        &QPushButton::clicked,
+            this, &MainWindow::onGenerateDiscConfig);
+    connect(m_btnGenPlayerCfg,      &QPushButton::clicked,
+            this, &MainWindow::onGeneratePlayerConfig);
+    connect(m_btnGenHighlighterCfg, &QPushButton::clicked,
+            this, &MainWindow::onGenerateHighlighterConfig);
+    connect(m_btnRunDisc,           &QPushButton::clicked,
+            this, &MainWindow::onRunDiscTracker);
+    connect(m_btnRunPlayer,         &QPushButton::clicked,
+            this, &MainWindow::onRunPlayerTracker);
+    connect(m_btnRunHighlighter,    &QPushButton::clicked,
+            this, &MainWindow::onRunPlayerHighlighter);
+    connect(m_btnLoadStats,         &QPushButton::clicked,
+            this, &MainWindow::onLoadStats);
+
+    parent->addWidget(grp, 1);
 }
 
 // ---------- Marker file list ----------
@@ -1555,6 +1649,7 @@ void MainWindow::onDeleteSelectedMarker()
     const int idx = selectedMarkerIndex();
     if (idx < 0) return;
     m_markers.remove(idx);
+    m_markersDirty = true;
     if (m_pendingMoveIndex == idx) cancelMarkerPlacement();
     else if (m_pendingMoveIndex > idx) --m_pendingMoveIndex;
     refreshMarkerList();
@@ -1569,6 +1664,7 @@ void MainWindow::onToggleSelectedMarkerType()
     m.type = (m.type == QLatin1String("player"))
                  ? QStringLiteral("disc")
                  : QStringLiteral("player");
+    m_markersDirty = true;
     refreshMarkerList();
     renderFrame();
 }
@@ -1598,4 +1694,538 @@ void MainWindow::onMoveSelectedMarker(bool checked)
         m_pendingMoveIndex = -1;
         m_videoLabel->unsetCursor();
     }
+}
+
+// ---------- Subservices: shared helpers ----------
+
+void MainWindow::appendLog(const QString &line)
+{
+    if (!m_subserviceLog) return;
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    m_subserviceLog->appendPlainText(QStringLiteral("[%1] %2").arg(stamp, line));
+}
+
+QString MainWindow::ensureMarkersSaved()
+{
+    if (m_lastSource.isEmpty()) {
+        QMessageBox::information(this, tr("Subservices"),
+            tr("Open a video first."));
+        return {};
+    }
+    if (m_markers.isEmpty()) {
+        QMessageBox::information(this, tr("Subservices"),
+            tr("Add at least one player marker (and one disc marker for\n"
+               "player_tracker / player_highlighter) before generating a config."));
+        return {};
+    }
+    if (!m_markersDirty) {
+        const QString dir = markersBaseDirForCurrentVideo();
+        if (!dir.isEmpty()) {
+            QDir d(dir);
+            const QStringList filt{QStringLiteral("markers_*.yml"),
+                                    QStringLiteral("markers_*.yaml")};
+            QFileInfoList files = d.entryInfoList(filt,
+                QDir::Files | QDir::NoDotAndDotDot, QDir::Time);
+            if (!files.isEmpty()) return files.first().absoluteFilePath();
+        }
+    }
+    const QString path = nextMarkersPath();
+    if (path.isEmpty() || !saveMarkersToFile(path)) {
+        QMessageBox::warning(this, tr("Subservices"),
+            tr("Auto-save of markers failed; cannot generate config."));
+        return {};
+    }
+    refreshMarkerFileList();
+    appendLog(tr("Auto-saved markers: %1").arg(path));
+    statusBar()->showMessage(tr("Markers saved: %1").arg(path), 4000);
+    return path;
+}
+
+QString MainWindow::findSubserviceExe(const QString &name) const
+{
+    const QString exeName = name + QStringLiteral(".exe");
+    const QStringList candidates = {
+        QStringLiteral("build_mingw_") + name,
+        QStringLiteral("build_mingw"),
+        QStringLiteral("build_mingw_player"),
+        QStringLiteral("build_mingw_highlighter"),
+        QStringLiteral("build/bin/Release"),
+        QStringLiteral("build/bin"),
+    };
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        for (const QString &c : candidates) {
+            const QString p = root.filePath(c + QStringLiteral("/") + exeName);
+            if (QFile::exists(p)) return QFileInfo(p).absoluteFilePath();
+        }
+        if (!root.cdUp()) break;
+    }
+    return QStandardPaths::findExecutable(name);
+}
+
+QString MainWindow::findLatestPlayerCsv() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        const QString outDir = root.filePath(QStringLiteral("player_tracker/out"));
+        QDir od(outDir);
+        if (od.exists()) {
+            const QString stem = QFileInfo(m_lastSource).completeBaseName();
+            QStringList filt;
+            filt << stem + QStringLiteral("_*.csv")
+                 << QStringLiteral("hole*_player_*.csv")
+                 << QStringLiteral("*_player_*.csv");
+            QFileInfoList files = od.entryInfoList(filt,
+                QDir::Files | QDir::NoDotAndDotDot, QDir::Time);
+            if (!files.isEmpty()) return files.first().absoluteFilePath();
+        }
+        if (!root.cdUp()) break;
+    }
+    return {};
+}
+
+namespace {
+
+QString makeOutPath(const QString &videoStem, const QString &service,
+                    const QString &kind, const QString &ext)
+{
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        if (QDir(root.filePath(service)).exists()) break;
+        if (!root.cdUp()) { root = QDir(QCoreApplication::applicationDirPath()); break; }
+    }
+    const QString outDir = root.filePath(service + QStringLiteral("/out"));
+    QDir().mkpath(outDir);
+    return QDir(outDir).filePath(videoStem + QStringLiteral("_") + kind + ext);
+}
+
+}  // namespace
+
+QString MainWindow::writeDiscTrackerConfig(const QString &markersPath)
+{
+    if (m_lastSource.isEmpty() || markersPath.isEmpty()) return {};
+    const QString videoAbs = QFileInfo(m_lastSource).absoluteFilePath();
+    const QString stem     = QFileInfo(m_lastSource).completeBaseName();
+    const QString cfgPath  = QDir(markersBaseDirForCurrentVideo()).filePath(
+        QStringLiteral("disc_tracker_%1.yaml")
+            .arg(QDateTime::currentDateTime().toString("yyyyMMddHHmmss")));
+
+    cv::FileStorage fs(cfgPath.toStdString(), cv::FileStorage::WRITE);
+    if (!fs.isOpened()) return {};
+
+    fs << "video_path"   << videoAbs.toStdString();
+    fs << "markers_path" << markersPath.toStdString();
+    fs << "backend"      << "hough";
+    fs << "hough_dp"     << 1.2;
+    fs << "hough_min_dist"   << 20.0;
+    fs << "hough_param1"     << 100.0;
+    fs << "hough_param2"     << 18.0;
+    fs << "hough_min_radius" << 4;
+    fs << "hough_max_radius" << 24;
+    fs << "use_kalman"        << 1;
+    fs << "max_missed_frames" << 0;
+    fs << "search_radius_px"  << 0;
+    fs << "seed_from_markers"       << 1;
+    fs << "clip_to_marker_window"   << 1;
+    fs << "marker_window_pad_sec"   << 0.4;
+    fs << "marker_tolerance_frames" << 2;
+    fs << "anchor_to_markers" << 1;
+    fs << "anchor_radius_px"  << 45;
+    fs << "anchor_fallback"   << 1;
+    fs << "csv_path"           << makeOutPath(stem, "disc_tracker",
+                                              "anchored_path",   ".csv").toStdString();
+    fs << "overlay_video_path" << makeOutPath(stem, "disc_tracker",
+                                              "anchored_overlay", ".mp4").toStdString();
+    fs << "draw_trajectory"    << 1;
+    fs.release();
+    return cfgPath;
+}
+
+QString MainWindow::writePlayerTrackerConfig(const QString &markersPath)
+{
+    if (m_lastSource.isEmpty() || markersPath.isEmpty()) return {};
+    const QString videoAbs = QFileInfo(m_lastSource).absoluteFilePath();
+    const QString stem     = QFileInfo(m_lastSource).completeBaseName();
+    const QString cfgPath  = QDir(markersBaseDirForCurrentVideo()).filePath(
+        QStringLiteral("player_tracker_%1.yaml")
+            .arg(QDateTime::currentDateTime().toString("yyyyMMddHHmmss")));
+
+    QDir root(QCoreApplication::applicationDirPath());
+    QString modelPath;
+    for (int up = 0; up < 6; ++up) {
+        const QString candidate = root.filePath(
+            QStringLiteral("LOCAL_DATA/models/yolov8n-pose.onnx"));
+        if (QFile::exists(candidate)) { modelPath = candidate; break; }
+        if (!root.cdUp()) break;
+    }
+    if (modelPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Generate player_tracker config"),
+            tr("Could not find LOCAL_DATA/models/yolov8n-pose.onnx.\n"
+               "Export it via: yolo export model=yolov8n-pose.pt format=onnx imgsz=640"));
+        return {};
+    }
+
+    cv::FileStorage fs(cfgPath.toStdString(), cv::FileStorage::WRITE);
+    if (!fs.isOpened()) return {};
+
+    fs << "video_path"             << videoAbs.toStdString();
+    fs << "markers_path"           << markersPath.toStdString();
+    fs << "model_path"             << modelPath.toStdString();
+    fs << "input_size"             << 640;
+    fs << "person_conf_threshold"  << 0.25;
+    fs << "nms_threshold"          << 0.45;
+    fs << "keypoint_vis_threshold" << 0.35;
+    fs << "min_duration_sec"       << 4.0;
+    fs << "max_duration_sec"       << 15.0;
+    fs << "pre_pad_sec"            << 0.0;
+    fs << "person_gate_radius_px"  << 250;
+    fs << "use_iou_tracking"       << 1;
+    fs << "use_keypoint_kalman"    << 1;
+    fs << "csv_path"           << makeOutPath(stem, "player_tracker",
+                                              "player",         ".csv").toStdString();
+    fs << "overlay_video_path" << makeOutPath(stem, "player_tracker",
+                                              "player_overlay", ".mp4").toStdString();
+    fs << "draw_all_keypoints"    << 1;
+    fs << "label_priority_joints" << 1;
+    fs.release();
+    return cfgPath;
+}
+
+QString MainWindow::writePlayerHighlighterConfig(const QString &playerCsvPath)
+{
+    if (m_lastSource.isEmpty() || playerCsvPath.isEmpty()) return {};
+    const QString videoAbs = QFileInfo(m_lastSource).absoluteFilePath();
+    const QString stem     = QFileInfo(m_lastSource).completeBaseName();
+    const QString cfgPath  = QDir(markersBaseDirForCurrentVideo()).filePath(
+        QStringLiteral("player_highlighter_%1.yaml")
+            .arg(QDateTime::currentDateTime().toString("yyyyMMddHHmmss")));
+
+    cv::FileStorage fs(cfgPath.toStdString(), cv::FileStorage::WRITE);
+    if (!fs.isOpened()) return {};
+
+    fs << "video_path"      << videoAbs.toStdString();
+    fs << "player_csv_path" << playerCsvPath.toStdString();
+    fs << "highlight_mode"  << "dim";
+    fs << "background_dim"  << 0.30;
+    fs << "draw_skeleton"   << 1;
+    fs << "draw_bbox"       << 1;
+    fs << "contour_thickness"      << 2;
+    fs << "grabcut_iterations"     << 3;
+    fs << "grabcut_margin"         << 24;
+    fs << "joint_seed_radius"      << 4;
+    fs << "keypoint_vis_threshold" << 0.35;
+    fs << "enable_depth"  << 0;
+    fs << "enable_zoom"   << 1;
+    fs << "zoom_factor"   << 1.6;
+    fs << "zoom_output_width"     << 960;
+    fs << "zoom_output_height"    << 540;
+    fs << "zoom_smoothing_alpha"  << 0.20;
+    fs << "overlay_video_path" << makeOutPath(stem, "player_highlighter",
+                                              "highlight", ".mp4").toStdString();
+    fs << "zoom_video_path"    << makeOutPath(stem, "player_highlighter",
+                                              "zoom",      ".mp4").toStdString();
+    fs.release();
+    return cfgPath;
+}
+
+void MainWindow::onGenerateDiscConfig()
+{
+    const QString markers = ensureMarkersSaved();
+    if (markers.isEmpty()) return;
+    const QString cfg = writeDiscTrackerConfig(markers);
+    if (cfg.isEmpty()) { appendLog(tr("disc_tracker config generation failed.")); return; }
+    m_lastDiscCfg = cfg;
+    m_btnRunDisc->setEnabled(true);
+    appendLog(tr("disc_tracker config: %1").arg(cfg));
+}
+
+void MainWindow::onGeneratePlayerConfig()
+{
+    const QString markers = ensureMarkersSaved();
+    if (markers.isEmpty()) return;
+    const QString cfg = writePlayerTrackerConfig(markers);
+    if (cfg.isEmpty()) { appendLog(tr("player_tracker config generation failed.")); return; }
+    m_lastPlayerCfg = cfg;
+    m_btnRunPlayer->setEnabled(true);
+    appendLog(tr("player_tracker config: %1").arg(cfg));
+}
+
+void MainWindow::onGenerateHighlighterConfig()
+{
+    if (m_lastSource.isEmpty()) {
+        QMessageBox::information(this, tr("Subservices"),
+            tr("Open a video first."));
+        return;
+    }
+    const QString csv = findLatestPlayerCsv();
+    if (csv.isEmpty()) {
+        QMessageBox::information(this, tr("Subservices"),
+            tr("No player_tracker CSV found yet.\n"
+               "Run player_tracker first, then generate the highlighter config."));
+        return;
+    }
+    const QString cfg = writePlayerHighlighterConfig(csv);
+    if (cfg.isEmpty()) { appendLog(tr("player_highlighter config generation failed.")); return; }
+    m_lastHighlighterCfg = cfg;
+    m_btnRunHighlighter->setEnabled(true);
+    appendLog(tr("player_highlighter config: %1 (csv=%2)").arg(cfg, csv));
+}
+
+void MainWindow::runSubservice(const QString &serviceName,
+                               const QString &exePath,
+                               const QString &configPath)
+{
+    if (m_subserviceProc && m_subserviceProc->state() != QProcess::NotRunning) {
+        appendLog(tr("Another subservice (%1) is still running — wait for it to finish.")
+                      .arg(m_runningServiceName));
+        return;
+    }
+    if (exePath.isEmpty() || !QFile::exists(exePath)) {
+        appendLog(tr("Could not locate %1 executable. Build the subservice first.")
+                      .arg(serviceName));
+        QMessageBox::warning(this, tr("Subservices"),
+            tr("Could not locate %1.exe.\n\nLooked under build_mingw*, build/bin, "
+               "and PATH. Build the subservice with cmake first.").arg(serviceName));
+        return;
+    }
+    if (!QFile::exists(configPath)) {
+        appendLog(tr("Config not found: %1").arg(configPath));
+        return;
+    }
+
+    if (!m_subserviceProc) {
+        m_subserviceProc = new QProcess(this);
+        connect(m_subserviceProc, &QProcess::readyReadStandardOutput,
+                this, &MainWindow::onSubserviceStdout);
+        connect(m_subserviceProc, &QProcess::readyReadStandardError,
+                this, &MainWindow::onSubserviceStderr);
+        connect(m_subserviceProc,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this](int code, QProcess::ExitStatus){ onSubserviceFinished(code); });
+    }
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QStringList pathExtras;
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        const QString p = root.filePath(
+            QStringLiteral("vcpkg_installed/x64-mingw-dynamic/bin"));
+        if (QDir(p).exists()) { pathExtras << QDir::toNativeSeparators(p); break; }
+        if (!root.cdUp()) break;
+    }
+    if (!pathExtras.isEmpty()) {
+        const QString cur = env.value(QStringLiteral("PATH"));
+        env.insert(QStringLiteral("PATH"),
+                   pathExtras.join(QDir::listSeparator()) + QDir::listSeparator() + cur);
+        m_subserviceProc->setProcessEnvironment(env);
+    }
+
+    m_runningServiceName = serviceName;
+    appendLog(tr("Running %1: \"%2\" --config \"%3\"")
+                  .arg(serviceName, exePath, configPath));
+    m_btnRunDisc->setEnabled(false);
+    m_btnRunPlayer->setEnabled(false);
+    m_btnRunHighlighter->setEnabled(false);
+    m_subserviceProc->setProgram(exePath);
+    m_subserviceProc->setArguments({QStringLiteral("--config"), configPath});
+    m_subserviceProc->start();
+}
+
+void MainWindow::onRunDiscTracker()
+{
+    runSubservice(QStringLiteral("disc_tracker"),
+                  findSubserviceExe(QStringLiteral("disc_tracker")),
+                  m_lastDiscCfg);
+}
+
+void MainWindow::onRunPlayerTracker()
+{
+    runSubservice(QStringLiteral("player_tracker"),
+                  findSubserviceExe(QStringLiteral("player_tracker")),
+                  m_lastPlayerCfg);
+}
+
+void MainWindow::onRunPlayerHighlighter()
+{
+    runSubservice(QStringLiteral("player_highlighter"),
+                  findSubserviceExe(QStringLiteral("player_highlighter")),
+                  m_lastHighlighterCfg);
+}
+
+void MainWindow::onSubserviceStdout()
+{
+    if (!m_subserviceProc) return;
+    const QByteArray data = m_subserviceProc->readAllStandardOutput();
+    if (m_subserviceLog) m_subserviceLog->appendPlainText(QString::fromLocal8Bit(data).trimmed());
+}
+
+void MainWindow::onSubserviceStderr()
+{
+    if (!m_subserviceProc) return;
+    const QByteArray data = m_subserviceProc->readAllStandardError();
+    if (m_subserviceLog) m_subserviceLog->appendPlainText(QString::fromLocal8Bit(data).trimmed());
+}
+
+void MainWindow::onSubserviceFinished(int exitCode)
+{
+    appendLog(tr("%1 finished (exit %2)")
+                  .arg(m_runningServiceName).arg(exitCode));
+    m_runningServiceName.clear();
+    m_btnRunDisc->setEnabled(!m_lastDiscCfg.isEmpty());
+    m_btnRunPlayer->setEnabled(!m_lastPlayerCfg.isEmpty());
+    m_btnRunHighlighter->setEnabled(!m_lastHighlighterCfg.isEmpty());
+}
+
+// ---------- Subservices: stats / joint angles ----------
+
+namespace {
+
+// Returns the angle (degrees) at vertex `b` of the triangle (a, b, c).
+// Returns NaN if any side has zero length.
+double angleAt(double ax, double ay, double bx, double by, double cx, double cy)
+{
+    const double v1x = ax - bx, v1y = ay - by;
+    const double v2x = cx - bx, v2y = cy - by;
+    const double n1 = std::hypot(v1x, v1y);
+    const double n2 = std::hypot(v2x, v2y);
+    if (n1 < 1e-6 || n2 < 1e-6) return std::nan("");
+    double c = (v1x * v2x + v1y * v2y) / (n1 * n2);
+    if (c >  1.0) c =  1.0;
+    if (c < -1.0) c = -1.0;
+    return qRadiansToDegrees(std::acos(c));
+}
+
+}  // namespace
+
+void MainWindow::onLoadStats()
+{
+    QString startDir;
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        const QString p = root.filePath(QStringLiteral("player_tracker/out"));
+        if (QDir(p).exists()) { startDir = p; break; }
+        if (!root.cdUp()) break;
+    }
+    if (startDir.isEmpty()) startDir = QDir::homePath();
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load player_tracker CSV"),
+        startDir, tr("CSV files (*.csv)"));
+    if (path.isEmpty()) return;
+    loadJointAnglesFromCsv(path);
+}
+
+void MainWindow::loadJointAnglesFromCsv(const QString &csvPath)
+{
+    QFile file(csvPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Load stats"),
+            tr("Cannot open CSV: %1").arg(csvPath));
+        return;
+    }
+    QTextStream in(&file);
+    const QString header = in.readLine();
+    if (header.isEmpty()) {
+        QMessageBox::warning(this, tr("Load stats"),
+            tr("CSV is empty: %1").arg(csvPath));
+        return;
+    }
+    const QStringList cols = header.split(QLatin1Char(','));
+    QHash<QString, int> idx;
+    for (int i = 0; i < cols.size(); ++i) idx.insert(cols.at(i).trimmed(), i);
+
+    auto need = [&](const QString &c) {
+        if (!idx.contains(c)) {
+            throw std::runtime_error(("CSV missing column: " + c).toStdString());
+        }
+        return idx.value(c);
+    };
+
+    // For each priority joint we compute one angle from a triple of joints.
+    // (label, A, B, C) — angle is the angle at B in the triangle A-B-C.
+    struct AngleSpec { QString label, a, b, c; };
+    const QVector<AngleSpec> specs = {
+        {tr("Left elbow"),     "left_shoulder",  "left_elbow",     "left_wrist"},
+        {tr("Right elbow"),    "right_shoulder", "right_elbow",    "right_wrist"},
+        {tr("Left shoulder"),  "left_hip",       "left_shoulder",  "left_elbow"},
+        {tr("Right shoulder"), "right_hip",      "right_shoulder", "right_elbow"},
+        {tr("Left knee"),      "left_hip",       "left_knee",      "left_ankle"},
+        {tr("Right knee"),     "right_hip",      "right_knee",     "right_ankle"},
+    };
+
+    struct Cols { int ax, ay, av, bx, by, bv, cx, cy, cv; };
+    QVector<Cols> colsList;
+    colsList.reserve(specs.size());
+    try {
+        for (const auto &s : specs) {
+            colsList.append({
+                need(s.a + "_x"), need(s.a + "_y"), need(s.a + "_v"),
+                need(s.b + "_x"), need(s.b + "_y"), need(s.b + "_v"),
+                need(s.c + "_x"), need(s.c + "_y"), need(s.c + "_v"),
+            });
+        }
+    } catch (const std::exception &e) {
+        QMessageBox::warning(this, tr("Load stats"),
+            tr("This CSV doesn't look like a player_tracker output: %1")
+                .arg(QString::fromUtf8(e.what())));
+        return;
+    }
+
+    const int hasPoseCol = idx.value("has_pose", -1);
+    constexpr float kVisFloor = 0.35f;
+
+    QVector<int>    hits(specs.size(), 0);
+    QVector<double> sum(specs.size(), 0.0);
+    QVector<double> mn(specs.size(),  std::numeric_limits<double>::max());
+    QVector<double> mx(specs.size(), -std::numeric_limits<double>::max());
+
+    int totalRows = 0;
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        if (line.isEmpty()) continue;
+        const QStringList cells = line.split(QLatin1Char(','));
+        if (cells.size() < cols.size()) continue;
+        ++totalRows;
+        if (hasPoseCol >= 0 && cells.value(hasPoseCol).toInt() == 0) continue;
+
+        for (int i = 0; i < specs.size(); ++i) {
+            const Cols &c = colsList[i];
+            const float va = cells.value(c.av).toFloat();
+            const float vb = cells.value(c.bv).toFloat();
+            const float vc = cells.value(c.cv).toFloat();
+            if (va < kVisFloor || vb < kVisFloor || vc < kVisFloor) continue;
+            const double ang = angleAt(
+                cells.value(c.ax).toDouble(), cells.value(c.ay).toDouble(),
+                cells.value(c.bx).toDouble(), cells.value(c.by).toDouble(),
+                cells.value(c.cx).toDouble(), cells.value(c.cy).toDouble());
+            if (std::isnan(ang)) continue;
+            ++hits[i];
+            sum[i] += ang;
+            if (ang < mn[i]) mn[i] = ang;
+            if (ang > mx[i]) mx[i] = ang;
+        }
+    }
+
+    if (m_poseJointList) m_poseJointList->clear();
+    for (int i = 0; i < specs.size(); ++i) {
+        QString text;
+        if (hits[i] == 0) {
+            text = QStringLiteral("%1: —").arg(specs[i].label);
+        } else {
+            const double mean = sum[i] / hits[i];
+            text = QStringLiteral("%1: mean %2°  [min %3° / max %4°]  (%5 frames)")
+                       .arg(specs[i].label)
+                       .arg(mean,   0, 'f', 1)
+                       .arg(mn[i],  0, 'f', 1)
+                       .arg(mx[i],  0, 'f', 1)
+                       .arg(hits[i]);
+        }
+        if (m_poseJointList) m_poseJointList->addItem(text);
+    }
+    appendLog(tr("Joint angles computed from %1 (%2 rows).")
+                  .arg(QFileInfo(csvPath).fileName()).arg(totalRows));
+    statusBar()->showMessage(tr("Loaded joint-angle stats from %1")
+                                 .arg(QFileInfo(csvPath).fileName()),
+                             5000);
 }

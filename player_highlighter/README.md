@@ -119,9 +119,21 @@ Frames processed: 115
   with pose:     115  (100.0%)
   segmented:     113  (98.3%)
   zoom frames:   115  (100.0%)
-  Overlay: D:/SANDBOX/videopp/player_highlighter/out/hole14_highlight.mp4
-  Zoom:    D:/SANDBOX/videopp/player_highlighter/out/hole14_zoom.mp4
+  Overlay: D:/SANDBOX/videopp/player_highlighter/out/hole14_highlight_20260503_152200.mp4
+  Zoom:    D:/SANDBOX/videopp/player_highlighter/out/hole14_zoom_20260503_152200.mp4
 ```
+
+**Outputs carry a `_<YYYYMMDD>_<HHMMSS>` suffix** (local time at launch),
+inserted before the extension; the `overlay_video_path` /
+`zoom_video_path` in the config are templates that the binary stamps at
+runtime. Both outputs from the same run share the same timestamp.
+
+> The `player_csv_path` input is **not** stamped — that's an input,
+> coming from a prior `player_tracker` run that itself stamped its
+> CSV. After running `player_tracker` you'll need to update
+> `player_csv_path` in your highlighter config to match the timestamped
+> CSV name (or run the two services in a small script that pipes the
+> latest filename through).
 
 ---
 

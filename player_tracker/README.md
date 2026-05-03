@@ -174,6 +174,19 @@ Keypoint visibility (priority joints first):
 ...
 ```
 
+### Output filenames
+
+**Outputs carry a `_<YYYYMMDD>_<HHMMSS>` suffix** (local time at launch),
+inserted before the extension. The `csv_path` / `overlay_video_path` in
+the config are templates — the binary stamps them at runtime, so
+`out/hole14_player.csv` becomes
+`out/hole14_player_20260503_152200.csv` on disk.
+
+This means `player_highlighter`'s `player_csv_path` must be updated to
+match the latest run, or pointed at a known-good prior run. (Use
+`Get-ChildItem out\hole14_player_*.csv | sort LastWriteTime -desc | select -first 1`
+in PowerShell to find the most recent.)
+
 ---
 
 ## CSV schema

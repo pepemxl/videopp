@@ -2,10 +2,32 @@
 #include "PlayerTracker.h"
 #include "Skeleton.h"
 
+#include <chrono>
+#include <ctime>
 #include <exception>
 #include <iomanip>
 #include <iostream>
 #include <string>
+
+namespace {
+
+// Local-time timestamp for output filenames: YYYYMMDD_HHMMSS.
+std::string nowTimestamp()
+{
+    const auto now = std::chrono::system_clock::now();
+    const auto t   = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
+    return buf;
+}
+
+}  // namespace
 
 namespace {
 
@@ -50,6 +72,7 @@ int main(int argc, char** argv)
     try {
         auto cfg = player_tracker::Config::loadFromFile(configPath);
         cfg.resolveRelativePaths(configPath);
+        cfg.stampOutputPaths(nowTimestamp());
 
         player_tracker::PlayerTracker tracker(cfg);
         const auto report = tracker.run();

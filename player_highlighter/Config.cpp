@@ -124,4 +124,23 @@ void Config::resolveRelativePaths(const std::string& configFilePath)
     resolveOne(zoomVideoPath,    base);
 }
 
+namespace {
+void stampOne(std::string& p, const std::string& timestamp)
+{
+    if (p.empty()) return;
+    fs::path fp(p);
+    fs::path parent = fp.parent_path();
+    std::string stem = fp.stem().string();
+    std::string ext  = fp.extension().string();
+    fp = parent / (stem + "_" + timestamp + ext);
+    p = fp.string();
+}
+}  // namespace
+
+void Config::stampOutputPaths(const std::string& timestamp)
+{
+    stampOne(overlayVideoPath, timestamp);
+    stampOne(zoomVideoPath,    timestamp);
+}
+
 }  // namespace player_highlighter

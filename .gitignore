@@ -4,7 +4,7 @@ disc_tracker/out/*
 player_tracker/configs/*
 player_tracker/out/*
 
-
+build_mingw_app/*
 build_dt_check/*
 build_qmake/*
 build_qmake_debug/*

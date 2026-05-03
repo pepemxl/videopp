@@ -185,12 +185,22 @@ $env:PATH = "D:\SANDBOX\videopp\vcpkg_installed\x64-mingw-dynamic\bin;" `
 The first PATH entry is needed at runtime so the OpenCV DLLs (and
 FFmpeg) resolve. Alternatively copy them next to the .exe.
 
+### Output filenames
+
+**Outputs carry a `_<YYYYMMDD>_<HHMMSS>` suffix** (local time at launch),
+inserted before the extension. All outputs from one run share the same
+timestamp so a CSV is easy to group with its overlay. The
+`csv_path` / `overlay_video_path` in the config are templates — the
+binary stamps them at runtime. So `out/hole14_anchored_path.csv` in
+the config becomes `out/hole14_anchored_path_20260503_152200.csv` on
+disk.
+
 ### Hole-14 test result (marker-anchored Hough)
 
 ```
 Processed 238 frames (detections=84, kalman_bridged=0, anchor=154, lost=0)
-  CSV:     disc_tracker/out/hole14_anchored_path.csv
-  Overlay: disc_tracker/out/hole14_anchored_overlay.mp4
+  CSV:     disc_tracker/out/hole14_anchored_path_20260503_152200.csv
+  Overlay: disc_tracker/out/hole14_anchored_overlay_20260503_152200.mp4
 
 Marker residuals (px error vs. ground-truth):
   -> matched 4/8 markers, mean=23.35 px, max=39.88 px

@@ -33,6 +33,8 @@ class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QMenu;
+class QPlainTextEdit;
+class QProcess;
 class QScrollArea;
 class QSlider;
 class QSpinBox;
@@ -85,6 +87,16 @@ private slots:
     void onToggleSelectedMarkerType();
     void onMoveSelectedMarker(bool checked);
     void onFilterSelected(int filterType);
+    void onGenerateDiscConfig();
+    void onGeneratePlayerConfig();
+    void onGenerateHighlighterConfig();
+    void onRunDiscTracker();
+    void onRunPlayerTracker();
+    void onRunPlayerHighlighter();
+    void onLoadStats();
+    void onSubserviceStdout();
+    void onSubserviceStderr();
+    void onSubserviceFinished(int exitCode);
 
 private:
     void updatePlaybackControls();
@@ -104,6 +116,37 @@ private:
     void rebuildCurrentFrame();
     QWidget *buildLeftSidebar();
     QWidget *buildRightSidebar();
+    void     buildSubservicesGroup(class QVBoxLayout *parent);
+
+    // Marker dirty-state tracking + autosave-before-action helper.
+    // Returns the path of the (possibly auto-)saved markers file, or
+    // QString() if there's nothing to save / save failed.
+    QString  ensureMarkersSaved();
+
+    // Config generators — each writes a fresh YAML next to the markers
+    // (LOCAL_DATA/configs/<video>/) and returns the absolute path.
+    QString  writeDiscTrackerConfig(const QString &markersPath);
+    QString  writePlayerTrackerConfig(const QString &markersPath);
+    QString  writePlayerHighlighterConfig(const QString &playerCsvPath);
+
+    // Locate a subservice executable across known build directories.
+    // `name` is the bare exe name without extension (e.g. "disc_tracker").
+    QString  findSubserviceExe(const QString &name) const;
+
+    // Find the most-recent player_tracker CSV for the current video, by
+    // mtime under player_tracker/out/<videoStem>_player_*.csv.
+    QString  findLatestPlayerCsv() const;
+
+    // Spawn a subservice as a QProcess, streaming stdout/stderr to the log.
+    void     runSubservice(const QString &serviceName,
+                           const QString &exePath,
+                           const QString &configPath);
+    void     appendLog(const QString &line);
+
+    // Read a player_tracker CSV, compute six priority joint angles
+    // (left/right elbow, shoulder, knee), aggregate over frames, and
+    // populate the existing Pose Joint Angles list with min/mean/max.
+    void     loadJointAnglesFromCsv(const QString &csvPath);
     void refreshMarkerFileList();
     void refreshMarkerList();
     int  selectedMarkerIndex() const;
@@ -183,6 +226,22 @@ private:
     int            m_pendingMoveIndex{-1};
     QVector<Marker> m_markers;
     bool           m_markersVisible{true};
+    bool           m_markersDirty{false};
+
+    // Subservices sidebar — buttons + log pane + last-generated config paths.
+    QPushButton    *m_btnGenDiscCfg{nullptr};
+    QPushButton    *m_btnGenPlayerCfg{nullptr};
+    QPushButton    *m_btnGenHighlighterCfg{nullptr};
+    QPushButton    *m_btnRunDisc{nullptr};
+    QPushButton    *m_btnRunPlayer{nullptr};
+    QPushButton    *m_btnRunHighlighter{nullptr};
+    QPushButton    *m_btnLoadStats{nullptr};
+    QPlainTextEdit *m_subserviceLog{nullptr};
+    QProcess       *m_subserviceProc{nullptr};
+    QString         m_runningServiceName;
+    QString         m_lastDiscCfg;
+    QString         m_lastPlayerCfg;
+    QString         m_lastHighlighterCfg;
 };
 
 #endif
