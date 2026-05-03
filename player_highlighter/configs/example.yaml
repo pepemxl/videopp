@@ -1,0 +1,51 @@
+%YAML:1.0
+---
+# Player-highlighter subservice — config schema. Paths resolve relative
+# to this file.
+
+# ---- inputs (both required) ----
+video_path:      "../../LOCAL_DATA/WhatsApp Video 2026-04-19 at 6.52.41 PM.mp4"
+player_csv_path: "../../player_tracker/out/hole14_player.csv"
+
+# ---- highlight mode ----
+# outline       — draw the player's silhouette contour (least invasive)
+# dim           — keep player at full brightness, dim everything else
+# silhouette    — color-tint the player region (semi-transparent)
+# depth_overlay — render player region with a depth colormap (needs MiDaS)
+highlight_mode: "dim"
+
+silhouette_color:    [0, 200, 255]   # BGR; used when mode == silhouette
+silhouette_alpha:    0.45
+background_dim:      0.35            # mode == dim: 0 = black bg, 1 = no dim
+draw_skeleton:       1
+draw_bbox:           1
+contour_thickness:   2
+
+# ---- segmentation (GrabCut seeded by skeleton joints) ----
+grabcut_iterations:     3
+grabcut_margin:         20    # px around bbox before running GrabCut
+joint_seed_radius:      4     # def-foreground disk drawn at each visible joint
+keypoint_vis_threshold: 0.40
+
+# ---- depth (optional, MiDaS ONNX) ----
+# Get the model with:
+#   wget https://github.com/isl-org/MiDaS/releases/download/v3_1/dpt_swin2_tiny_256.onnx
+# (or any MiDaS 2.x small variant — a ~21 MB model is enough.)
+enable_depth:     0
+depth_model_path: "../../LOCAL_DATA/models/midas_small.onnx"
+depth_input_size: 256
+depth_mean:       [0.485, 0.456, 0.406]
+depth_std:        [0.229, 0.224, 0.225]
+depth_colormap:   2     # cv::COLORMAP_JET (TURBO=20, INFERNO=14, MAGMA=13)
+depth_alpha:      0.55
+
+# ---- zoom output (second video, follows the player) ----
+enable_zoom:           1
+zoom_factor:           1.6     # crop = bbox * zoom_factor, centered
+zoom_output_width:     960
+zoom_output_height:    540
+zoom_smoothing_alpha:  0.25    # EMA on bbox center+size; lower = steadier
+
+# ---- outputs ----
+overlay_video_path: "out/highlight.mp4"
+zoom_video_path:    "out/zoom.mp4"

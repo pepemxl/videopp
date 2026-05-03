@@ -78,3 +78,9 @@ option(BUILD_PLAYER_TRACKER "Build the standalone player-tracking subservice" ON
 if(BUILD_PLAYER_TRACKER)
     add_subdirectory(player_tracker)
 endif()
+
+# --- Standalone player-highlighter subservice (no Qt dependency, requires dnn) ---
+option(BUILD_PLAYER_HIGHLIGHTER "Build the standalone player-highlighter subservice" ON)
+if(BUILD_PLAYER_HIGHLIGHTER)
+    add_subdirectory(player_highlighter)
+endif()
