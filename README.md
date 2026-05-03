@@ -162,6 +162,7 @@ The executable depends on Qt, OpenCV, and MinGW runtime DLLs. Either:
 | `MainWindow.{h,cpp}` | UI: video display + Start/Stop buttons |
 | `VideoProcessor.{h,cpp}` | `QThread` worker that grabs and processes frames |
 | `disc_tracker/` | Standalone (no-Qt) console binary that consumes a video + marker file, tracks the disc, and writes a CSV trajectory + overlay video. See [`disc_tracker/README.md`](disc_tracker/README.md). |
+| `player_tracker/` | Standalone (no-Qt) console binary that runs YOLOv8/11-pose, locks onto the marked player, and writes a per-frame skeleton CSV (17 COCO keypoints) over the wind-up + throw window. See [`player_tracker/README.md`](player_tracker/README.md). |
 
 ---
 
@@ -177,3 +178,15 @@ The marker-anchored Hough mode is the working out-of-the-box path on
 disc-golf footage; the YOLO mode is the recommended endpoint once you
 have a fine-tuned model. Full docs and the verified MinGW build
 invocation are in [`disc_tracker/README.md`](disc_tracker/README.md).
+
+## Player-skeleton subservice
+
+`player_tracker/` is the second sibling target — same toolchain, but
+running Ultralytics YOLOv8/11-**pose** to extract a 17-keypoint COCO
+skeleton on the player. It locks identity using the player marker on
+the first frame, carries it via max-IoU on subsequent frames, and
+optionally Kalman-smooths every joint. Tracking runs from the first
+player marker until the first disc marker (= release moment), clamped
+to a 4–15 s window by default. Priority joints (shoulders, elbows,
+knees) are highlighted and labeled in the overlay. Full docs in
+[`player_tracker/README.md`](player_tracker/README.md).
