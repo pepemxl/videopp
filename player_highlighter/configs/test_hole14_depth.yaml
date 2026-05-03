@@ -1,0 +1,32 @@
+%YAML:1.0
+---
+# Hole-14 end-to-end test for depth_overlay mode (MiDaS-small ONNX).
+# Same inputs as test_hole14_highlighter.yaml but using the depth pipeline.
+
+video_path:      "D:/SANDBOX/videopp/LOCAL_DATA/WhatsApp Video 2026-04-19 at 6.52.41 PM.mp4"
+player_csv_path: "D:/SANDBOX/videopp/player_tracker/out/hole14_player.csv"
+
+highlight_mode: "depth_overlay"   # implies enable_depth = 1
+draw_skeleton:     1
+draw_bbox:         1
+contour_thickness: 2
+
+grabcut_iterations:     3
+grabcut_margin:         24
+joint_seed_radius:      4
+keypoint_vis_threshold: 0.35
+
+enable_depth:     1
+depth_model_path: "D:/SANDBOX/videopp/LOCAL_DATA/models/model-small.onnx"
+depth_input_size: 256
+depth_alpha:      0.55
+depth_colormap:   20    # 20 = COLORMAP_TURBO (perceptually uniform)
+
+enable_zoom:           1
+zoom_factor:           1.6
+zoom_output_width:     960
+zoom_output_height:    540
+zoom_smoothing_alpha:  0.20
+
+overlay_video_path: "D:/SANDBOX/videopp/player_highlighter/out/hole14_depth.mp4"
+zoom_video_path:    "D:/SANDBOX/videopp/player_highlighter/out/hole14_depth_zoom.mp4"

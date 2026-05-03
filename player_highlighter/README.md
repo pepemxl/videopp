@@ -128,18 +128,28 @@ Frames processed: 115
 ## Optional: depth map via MiDaS
 
 Depth is gated by `enable_depth: 1` (or `highlight_mode: "depth_overlay"`,
-which implies it). Get the ONNX:
+which implies it). The MiDaS project publishes pre-exported ONNX files
+on the `v2_1` release page —
+<https://github.com/isl-org/MiDaS/releases/tag/v2_1>:
 
-```bash
-# MiDaS v2.1 small — ~21 MB, decent accuracy, real-time on CPU
-curl -L -o LOCAL_DATA/models/midas_small.onnx \
-    https://github.com/isl-org/MiDaS/releases/download/v2_1/midas_v21_small_256.onnx
+| File | Size | Notes |
+| --- | ---: | --- |
+| `model-small.onnx`     | ~67 MB | MiDaS-small, 256² input. Recommended default. |
+| `model-f6b98070.onnx`  | ~417 MB | Full MiDaS, 384² input. Slower, sharper. |
+
+Download the small variant and rename it to whatever your config points
+at (the example uses `midas_small.onnx`):
+
+```powershell
+curl -L `
+    -o LOCAL_DATA\models\midas_small.onnx `
+    https://github.com/isl-org/MiDaS/releases/download/v2_1/model-small.onnx
 ```
 
-Or export from PyTorch yourself if you prefer:
+Or export from PyTorch yourself if you prefer fresher weights:
 
 ```python
-import torch, urllib.request
+import torch
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 midas.eval()
 dummy = torch.rand(1, 3, 256, 256)

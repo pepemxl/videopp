@@ -191,3 +191,17 @@ player marker until the first disc marker (= release moment), clamped
 to a 4–15 s window by default. Priority joints (shoulders, elbows,
 knees) are highlighted and labeled in the overlay. Full docs in
 [`player_tracker/README.md`](player_tracker/README.md).
+
+## Player-highlighter subservice
+
+`player_highlighter/` is the third sibling target — it consumes
+`player_tracker`'s CSV plus the source video, runs **GrabCut seeded by
+the skeleton joints** to segment the player from the background, and
+writes a highlighted overlay video. Four highlight modes (`outline`,
+`dim`, `silhouette`, `depth_overlay`) cover most analytics needs.
+Optional MiDaS-small ONNX adds a relative depth map for a 3D-feeling
+visualization. A second optional output renders a smoothly-cropped
+zoom track (configurable factor, EMA-smoothed bbox, fixed output
+resolution) — useful when you want to study a small player in a wide
+shot. Full docs in
+[`player_highlighter/README.md`](player_highlighter/README.md).
