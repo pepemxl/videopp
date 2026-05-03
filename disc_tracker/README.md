@@ -52,8 +52,23 @@ yolo train  model=yolov8n.pt data=disc.yaml epochs=80 imgsz=640
 yolo export model=runs/detect/train/weights/best.pt format=onnx imgsz=640
 ```
 
-Drop `best.onnx` into `model_path` and set `class_ids: [0]` (or
-whichever class indices your dataset uses).
+Drop `best.onnx` into `LOCAL_DATA/models/` (the project convention —
+all Ultralytics weights and ONNX exports live there) and point
+`model_path` at it. Set `class_ids: [0]` (or whichever class indices
+your dataset uses).
+
+Stock weights / exports follow the same convention:
+
+```
+LOCAL_DATA/
+└── models/
+    ├── yolov8n.pt
+    ├── yolov8n.onnx
+    ├── yolov8n-pose.pt
+    └── yolov8n-pose.onnx
+```
+
+The `LOCAL_DATA/` tree is gitignored, so models stay out of the repo.
 
 ---
 

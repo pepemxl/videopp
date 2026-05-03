@@ -33,6 +33,9 @@ void KalmanTracker::init(const cv::Point2f& measurement)
     m_kf.statePost.at<float>(2) = 0.f;
     m_kf.statePost.at<float>(3) = 0.f;
     cv::setIdentity(m_kf.errorCovPost, cv::Scalar::all(1.0));
+    // Prime statePre / errorCovPre so a subsequent correct() — even
+    // before any caller-side predict() — has well-defined inputs.
+    m_kf.predict();
     m_initialized = true;
 }
 

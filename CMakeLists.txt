@@ -72,3 +72,9 @@ option(BUILD_DISC_TRACKER "Build the standalone disc-tracking subservice" ON)
 if(BUILD_DISC_TRACKER)
     add_subdirectory(disc_tracker)
 endif()
+
+# --- Standalone player-tracking subservice (no Qt dependency, requires dnn) ---
+option(BUILD_PLAYER_TRACKER "Build the standalone player-tracking subservice" ON)
+if(BUILD_PLAYER_TRACKER)
+    add_subdirectory(player_tracker)
+endif()

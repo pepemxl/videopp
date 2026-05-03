@@ -1,8 +1,8 @@
 LOCAL_DATA/*
 disc_tracker/configs/*
 disc_tracker/out/*
-yolov8n.onnx
-yolov8n.pt
+player_tracker/configs/*
+player_tracker/out/*
 
 
 build_dt_check/*
