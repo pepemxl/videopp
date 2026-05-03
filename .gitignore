@@ -1,4 +1,9 @@
 LOCAL_DATA/*
+disc_tracker/configs/*
+disc_tracker/out/*
+yolov8n.onnx
+yolov8n.pt
+
 
 build_dt_check/*
 build_qmake/*
