@@ -66,3 +66,9 @@ if(WIN32)
         )
     endif()
 endif()
+
+# --- Standalone disc-trajectory subservice (no Qt dependency) ---
+option(BUILD_DISC_TRACKER "Build the standalone disc-tracking subservice" ON)
+if(BUILD_DISC_TRACKER)
+    add_subdirectory(disc_tracker)
+endif()

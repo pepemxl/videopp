@@ -37,12 +37,21 @@ struct Config
     int  maxMissedFrames{15};
     int  searchRadiusPx{0};   // 0 disables spatial gating
 
-    // --- markers (optional ground-truth / Kalman seed) ---
+    // --- markers (optional ground-truth / Kalman seed / spatial anchor) ---
     std::string markersPath;
     bool        seedFromMarkers{true};   // init Kalman from first disc marker
     bool        clipToMarkerWindow{true};// auto-set start/end from marker times
     double      markerWindowPadSec{0.3}; // pad before/after marker window
     int         markerToleranceFrames{2};// residual matching window
+
+    // --- marker-anchored gating (option 2 in the recommendation) ---
+    // When enabled, each frame's expected disc position is computed by
+    // linear interpolation between adjacent disc markers; the tracker only
+    // accepts detections inside anchor_radius_px of that anchor and falls
+    // back to the anchor itself when nothing is found in the gate.
+    bool anchorToMarkers{false};
+    int  anchorRadiusPx{60};
+    bool anchorFallback{true};   // emit anchor as a path point when no detection
 
     // --- output ---
     std::string csvPath;
