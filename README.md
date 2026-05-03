@@ -161,3 +161,19 @@ The executable depends on Qt, OpenCV, and MinGW runtime DLLs. Either:
 | `main.cpp` | Application entry point |
 | `MainWindow.{h,cpp}` | UI: video display + Start/Stop buttons |
 | `VideoProcessor.{h,cpp}` | `QThread` worker that grabs and processes frames |
+| `disc_tracker/` | Standalone (no-Qt) console binary that consumes a video + marker file, tracks the disc, and writes a CSV trajectory + overlay video. See [`disc_tracker/README.md`](disc_tracker/README.md). |
+
+---
+
+## Disc-trajectory subservice
+
+`disc_tracker/` is a sibling target — a small console binary that reads
+a config file pointing at a video (and optionally a marker file saved
+by this Qt app), runs a per-frame detector (Ultralytics YOLOv8/11 ONNX
+or classical Hough), gates and Kalman-smooths the result, and writes
+the trajectory.
+
+The marker-anchored Hough mode is the working out-of-the-box path on
+disc-golf footage; the YOLO mode is the recommended endpoint once you
+have a fine-tuned model. Full docs and the verified MinGW build
+invocation are in [`disc_tracker/README.md`](disc_tracker/README.md).
