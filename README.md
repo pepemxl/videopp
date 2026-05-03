@@ -163,6 +163,7 @@ The executable depends on Qt, OpenCV, and MinGW runtime DLLs. Either:
 | `VideoProcessor.{h,cpp}` | `QThread` worker that grabs and processes frames |
 | `disc_tracker/` | Standalone (no-Qt) console binary that consumes a video + marker file, tracks the disc, and writes a CSV trajectory + overlay video. See [`disc_tracker/README.md`](disc_tracker/README.md). |
 | `player_tracker/` | Standalone (no-Qt) console binary that runs YOLOv8/11-pose, locks onto the marked player, and writes a per-frame skeleton CSV (17 COCO keypoints) over the wind-up + throw window. See [`player_tracker/README.md`](player_tracker/README.md). |
+| `player_highlighter/` | Standalone (no-Qt) console binary that consumes `player_tracker`'s CSV + the source video, GrabCut-segments the player using the skeleton joints as foreground seeds, and writes a highlighted overlay plus an optional zoomed/cropped track for analytics. Optional MiDaS depth overlay. See [`player_highlighter/README.md`](player_highlighter/README.md). |
 
 ---
 
