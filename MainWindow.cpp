@@ -37,6 +37,8 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QPalette>
 #include <QStyle>
 #include <QStyleFactory>
@@ -1485,6 +1487,7 @@ void MainWindow::buildSubservicesGroup(QVBoxLayout *parent)
     m_btnGenHighlighterCfg = new QPushButton(tr("Gen highlighter cfg"));
     m_btnRunHighlighter    = new QPushButton(tr("Run highlighter"));
     m_btnLoadStats         = new QPushButton(tr("Load stats from CSV..."));
+    m_btnLoadResults       = new QPushButton(tr("Load tracker results..."));
 
     m_btnGenDiscCfg->setToolTip(
         tr("Auto-save markers if dirty, then write a YAML config\n"
@@ -1503,6 +1506,9 @@ void MainWindow::buildSubservicesGroup(QVBoxLayout *parent)
     m_btnLoadStats->setToolTip(
         tr("Pick a player_tracker CSV and compute joint angles\n"
            "(elbows, shoulders, knees) into the Pose panel above."));
+    m_btnLoadResults->setToolTip(
+        tr("Load disc/skeleton CSVs produced by the trackers for the\n"
+           "current video. If multiple runs exist, choose which to load."));
 
     // Run buttons start disabled — enabled once a config has been generated.
     m_btnRunDisc->setEnabled(false);
@@ -1512,7 +1518,7 @@ void MainWindow::buildSubservicesGroup(QVBoxLayout *parent)
     gv->addLayout(makeRow(m_btnGenDiscCfg,        m_btnRunDisc));
     gv->addLayout(makeRow(m_btnGenPlayerCfg,      m_btnRunPlayer));
     gv->addLayout(makeRow(m_btnGenHighlighterCfg, m_btnRunHighlighter));
-    gv->addWidget(m_btnLoadStats);
+    gv->addLayout(makeRow(m_btnLoadResults, m_btnLoadStats));
 
     m_subserviceLog = new QPlainTextEdit;
     m_subserviceLog->setReadOnly(true);
@@ -1540,6 +1546,8 @@ void MainWindow::buildSubservicesGroup(QVBoxLayout *parent)
             this, &MainWindow::onRunPlayerHighlighter);
     connect(m_btnLoadStats,         &QPushButton::clicked,
             this, &MainWindow::onLoadStats);
+    connect(m_btnLoadResults,       &QPushButton::clicked,
+            this, &MainWindow::onLoadTrackerResults);
 
     parent->addWidget(grp, 1);
 }
@@ -2385,16 +2393,68 @@ QString MainWindow::findLatestZoomVideo() const
     });
 }
 
+namespace {
+
+// Enumerate all files under `subDir` matching any glob filter. Walks up
+// from the application dir to handle build-tree layouts. Returns absolute
+// paths sorted newest-first.
+QStringList listAllUnder(const QString &subDir, const QStringList &filters)
+{
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        const QString dir = root.filePath(subDir);
+        QDir d(dir);
+        if (d.exists()) {
+            QFileInfoList files = d.entryInfoList(filters,
+                QDir::Files | QDir::NoDotAndDotDot, QDir::Time);
+            QStringList paths;
+            paths.reserve(files.size());
+            for (const QFileInfo &fi : files)
+                paths << fi.absoluteFilePath();
+            return paths;
+        }
+        if (!root.cdUp()) break;
+    }
+    return {};
+}
+
+}  // namespace
+
+QStringList MainWindow::enumerateDiscCsvs() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    const QString stem = QFileInfo(m_lastSource).completeBaseName();
+    return listAllUnder(QStringLiteral("disc_tracker/out"), {
+        stem + QStringLiteral("_*.csv"),
+    });
+}
+
+QStringList MainWindow::enumerateSkeletonCsvs() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    const QString stem = QFileInfo(m_lastSource).completeBaseName();
+    return listAllUnder(QStringLiteral("player_tracker/out"), {
+        stem + QStringLiteral("_*.csv"),
+    });
+}
+
 // ---------- Result overlays: CSV loaders ----------
 
 bool MainWindow::loadDiscTrackForCurrentVideo()
 {
-    m_discTrack.clear();
     const QString csv = findLatestDiscCsv();
     if (csv.isEmpty()) {
+        m_discTrack.clear();
         appendLog(tr("No disc_tracker CSV found for the current video."));
         return false;
     }
+    return loadDiscTrackFromFile(csv);
+}
+
+bool MainWindow::loadDiscTrackFromFile(const QString &csv)
+{
+    m_discTrack.clear();
+    if (csv.isEmpty()) return false;
 
     QFile f(csv);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2444,13 +2504,23 @@ bool MainWindow::loadDiscTrackForCurrentVideo()
 
 bool MainWindow::loadSkeletonTrackForCurrentVideo()
 {
-    m_skelTrack.clear();
-    if (m_lastSource.isEmpty()) return false;
+    if (m_lastSource.isEmpty()) {
+        m_skelTrack.clear();
+        return false;
+    }
     const QString csv = findLatestPlayerCsv();
     if (csv.isEmpty()) {
+        m_skelTrack.clear();
         appendLog(tr("No player_tracker CSV found for the current video."));
         return false;
     }
+    return loadSkeletonTrackFromFile(csv);
+}
+
+bool MainWindow::loadSkeletonTrackFromFile(const QString &csv)
+{
+    m_skelTrack.clear();
+    if (csv.isEmpty()) return false;
 
     QFile f(csv);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -2739,6 +2809,108 @@ void MainWindow::onSwitchSourceZoom()
     startFile(p);
     m_swappingSource = false;
     appendLog(tr("Switched playback to zoom: %1").arg(p));
+}
+
+void MainWindow::onLoadTrackerResults()
+{
+    if (m_lastSource.isEmpty()) {
+        QMessageBox::information(this, tr("Load tracker results"),
+            tr("Open a video first."));
+        return;
+    }
+
+    const QStringList discCsvs = enumerateDiscCsvs();
+    const QStringList skelCsvs = enumerateSkeletonCsvs();
+
+    if (discCsvs.isEmpty() && skelCsvs.isEmpty()) {
+        QMessageBox::information(this, tr("Load tracker results"),
+            tr("No tracker outputs found for this video.\n"
+               "Run disc_tracker and/or player_tracker first."));
+        return;
+    }
+
+    QString chosenDisc;
+    QString chosenSkel;
+    const bool needsChooser = (discCsvs.size() > 1 || skelCsvs.size() > 1);
+
+    if (!needsChooser) {
+        if (!discCsvs.isEmpty()) chosenDisc = discCsvs.first();
+        if (!skelCsvs.isEmpty()) chosenSkel = skelCsvs.first();
+    } else {
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Load tracker results"));
+
+        auto *form = new QFormLayout;
+        QComboBox *cbDisc = nullptr;
+        QComboBox *cbSkel = nullptr;
+
+        const QString skipLabel = tr("(skip)");
+        auto buildCombo = [&](const QStringList &paths) {
+            auto *cb = new QComboBox(&dlg);
+            cb->addItem(skipLabel, QString());
+            for (const QString &p : paths) {
+                const QFileInfo fi(p);
+                const QString label = QStringLiteral("%1   (%2)")
+                    .arg(fi.fileName(),
+                         fi.lastModified().toString("yyyy-MM-dd hh:mm"));
+                cb->addItem(label, p);
+            }
+            // Pre-select the most-recent file (index 1).
+            if (cb->count() > 1) cb->setCurrentIndex(1);
+            return cb;
+        };
+
+        if (!discCsvs.isEmpty()) {
+            cbDisc = buildCombo(discCsvs);
+            form->addRow(tr("Disc trajectory CSV:"), cbDisc);
+        }
+        if (!skelCsvs.isEmpty()) {
+            cbSkel = buildCombo(skelCsvs);
+            form->addRow(tr("Player skeleton CSV:"), cbSkel);
+        }
+
+        auto *buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        auto *outer = new QVBoxLayout(&dlg);
+        outer->addLayout(form);
+        outer->addWidget(buttons);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        if (cbDisc) chosenDisc = cbDisc->currentData().toString();
+        if (cbSkel) chosenSkel = cbSkel->currentData().toString();
+    }
+
+    bool anyLoaded = false;
+
+    if (!chosenDisc.isEmpty() && loadDiscTrackFromFile(chosenDisc)) {
+        anyLoaded = true;
+        if (m_btnShowDiscTrack) {
+            QSignalBlocker b(m_btnShowDiscTrack);
+            m_btnShowDiscTrack->setChecked(true);
+        }
+        m_showDiscTrack = true;
+    }
+    if (!chosenSkel.isEmpty() && loadSkeletonTrackFromFile(chosenSkel)) {
+        anyLoaded = true;
+        if (m_btnShowSkeleton) {
+            QSignalBlocker b(m_btnShowSkeleton);
+            m_btnShowSkeleton->setChecked(true);
+        }
+        m_showSkeleton = true;
+        // Also populate the joint-angle stats panel from the same CSV.
+        loadJointAnglesFromCsv(chosenSkel);
+    }
+
+    if (anyLoaded) {
+        renderFrame();
+    } else {
+        QMessageBox::information(this, tr("Load tracker results"),
+            tr("Nothing was loaded."));
+    }
 }
 
 void MainWindow::onThemeSelected(QAction *act)

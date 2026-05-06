@@ -127,6 +127,7 @@ private slots:
     void onSubserviceFinished(int exitCode);
     void onToggleDiscOverlay(bool checked);
     void onToggleSkeletonOverlay(bool checked);
+    void onLoadTrackerResults();
     void onSwitchSourceOriginal();
     void onSwitchSourceHighlight();
     void onSwitchSourceZoom();
@@ -186,6 +187,10 @@ private:
     // by the trackers. Returns true on success.
     bool     loadDiscTrackForCurrentVideo();
     bool     loadSkeletonTrackForCurrentVideo();
+    bool     loadDiscTrackFromFile(const QString &csv);
+    bool     loadSkeletonTrackFromFile(const QString &csv);
+    QStringList enumerateDiscCsvs() const;
+    QStringList enumerateSkeletonCsvs() const;
     QString  findLatestDiscCsv() const;
 
     // Most-recent highlighter / zoom mp4 for the current video — used by
@@ -291,6 +296,7 @@ private:
     QPushButton    *m_btnRunPlayer{nullptr};
     QPushButton    *m_btnRunHighlighter{nullptr};
     QPushButton    *m_btnLoadStats{nullptr};
+    QPushButton    *m_btnLoadResults{nullptr};
     QPlainTextEdit *m_subserviceLog{nullptr};
     QProcess       *m_subserviceProc{nullptr};
     QString         m_runningServiceName;
