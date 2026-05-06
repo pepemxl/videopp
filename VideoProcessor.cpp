@@ -116,6 +116,7 @@ void VideoProcessor::run()
     double fps = cap.get(cv::CAP_PROP_FPS);
     if (fps <= 0.0 || fps > 240.0) fps = 30.0;
     const double baseFrameDelayMs = 1000.0 / fps;
+    m_fps.store(fps);
 
     // Emit total duration for file sources (0 if unknown).
     double durationSec = 0.0;
@@ -245,5 +246,6 @@ void VideoProcessor::run()
     }
 
     cap.release();
+    m_fps.store(0.0);
     emit finished();
 }

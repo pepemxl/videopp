@@ -87,6 +87,8 @@ private slots:
     void onPlayPause();
     void onSeekForward();
     void onSeekBackward();
+    void onStepFrameForward();
+    void onStepFrameBackward();
     void onProcessorFinished();
     void onError(const QString &message);
     void onSpeedUp();
@@ -189,6 +191,12 @@ private:
     bool     loadSkeletonTrackForCurrentVideo();
     bool     loadDiscTrackFromFile(const QString &csv);
     bool     loadSkeletonTrackFromFile(const QString &csv);
+
+    // Joint-angle stats for the Pose panel. Computed once after a skeleton
+    // CSV loads (aggregate over the whole track), then refreshed per-frame
+    // by updatePoseAnglesForCurrentFrame() to show the live value.
+    void     computeJointStatsFromSkelTrack();
+    void     updatePoseAnglesForCurrentFrame();
     QStringList enumerateDiscCsvs() const;
     QStringList enumerateSkeletonCsvs() const;
     QString  findLatestDiscCsv() const;
@@ -312,6 +320,19 @@ private:
     QPushButton    *m_btnSrcZoom{nullptr};
     QVector<DiscRow> m_discTrack;
     QVector<SkelRow> m_skelTrack;
+
+    // One row per priority joint shown in the Pose panel. Aggregates are
+    // computed when a skeleton CSV loads; the live value comes from the
+    // SkelRow at the current playback time.
+    struct JointStats {
+        QString label;
+        int     a{-1}, b{-1}, c{-1};   // SkelRow keypoint indices (angle at b)
+        int     hits{0};
+        double  mn{0.0};
+        double  mx{0.0};
+        double  mean{0.0};
+    };
+    QVector<JointStats> m_jointStats;
     bool             m_showDiscTrack{false};
     bool             m_showSkeleton{false};
     QString          m_originalSourcePath;   // remembered when swapping source

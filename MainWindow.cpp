@@ -274,6 +274,11 @@ MainWindow::MainWindow(QWidget *parent)
     QAction *actResetSpeed = playbackMenu->addAction(tr("&Reset Speed"));
     actResetSpeed->setShortcut(QKeySequence(tr("Ctrl+0")));
     playbackMenu->addSeparator();
+    QAction *actStepBack = playbackMenu->addAction(tr("Previous Frame"));
+    actStepBack->setShortcut(QKeySequence(Qt::Key_Z));
+    QAction *actStepFwd  = playbackMenu->addAction(tr("Next Frame"));
+    actStepFwd->setShortcut(QKeySequence(Qt::Key_X));
+    playbackMenu->addSeparator();
     m_actRecord = playbackMenu->addAction(tr("Re&cord..."));
     m_actRecord->setCheckable(true);
     m_actRecord->setShortcut(QKeySequence(tr("Ctrl+Shift+R")));
@@ -284,6 +289,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(actSpeedUp,    &QAction::triggered, this, &MainWindow::onSpeedUp);
     connect(actSpeedDown,  &QAction::triggered, this, &MainWindow::onSpeedDown);
     connect(actResetSpeed, &QAction::triggered, this, &MainWindow::onResetSpeed);
+    connect(actStepBack,   &QAction::triggered, this, &MainWindow::onStepFrameBackward);
+    connect(actStepFwd,    &QAction::triggered, this, &MainWindow::onStepFrameForward);
     connect(m_actRecord,   &QAction::toggled,   this, &MainWindow::onToggleRecord);
 
     // ----- View menu -----
@@ -552,6 +559,8 @@ void MainWindow::renderFrame()
     }
     m_videoLabel->setPixmap(pix);
     m_videoLabel->resize(pix.size());
+
+    updatePoseAnglesForCurrentFrame();
 }
 
 void MainWindow::drawMarkersOnPixmap(QPixmap &pix) const
@@ -603,6 +612,8 @@ void MainWindow::startFile(const QString &path, double startSec)
         m_originalSourcePath = path;
         m_discTrack.clear();
         m_skelTrack.clear();
+        m_jointStats.clear();
+        if (m_poseJointList) m_poseJointList->clear();
         if (m_btnShowDiscTrack && m_btnShowDiscTrack->isChecked()) {
             QSignalBlocker b(m_btnShowDiscTrack);
             m_btnShowDiscTrack->setChecked(false);
@@ -718,6 +729,32 @@ void MainWindow::onSeekBackward()
 {
     if (!m_processor->isRunning() || !m_isFileSource) return;
     m_processor->seekRelativeSeconds(-kSeekStepSeconds);
+}
+
+void MainWindow::onStepFrameForward()
+{
+    if (!m_processor->isRunning() || !m_isFileSource) return;
+    // Frame-stepping only makes sense paused — auto-pause on the first press
+    // so successive presses advance one frame at a time.
+    if (!m_processor->isPaused()) {
+        m_processor->setPaused(true);
+        m_btnPlayPause->setIcon(IconManager::instance().getIcon("play"));
+    }
+    double fps = m_processor->fps();
+    if (fps <= 0.0) fps = 30.0;
+    m_processor->seekRelativeSeconds(1.0 / fps);
+}
+
+void MainWindow::onStepFrameBackward()
+{
+    if (!m_processor->isRunning() || !m_isFileSource) return;
+    if (!m_processor->isPaused()) {
+        m_processor->setPaused(true);
+        m_btnPlayPause->setIcon(IconManager::instance().getIcon("play"));
+    }
+    double fps = m_processor->fps();
+    if (fps <= 0.0) fps = 30.0;
+    m_processor->seekRelativeSeconds(-1.0 / fps);
 }
 
 void MainWindow::onSpeedUp()
@@ -1663,6 +1700,7 @@ void MainWindow::clearTelemetry()
     if (m_lblApex)     m_lblApex->setText(QStringLiteral("—"));
     if (m_lblDistance) m_lblDistance->setText(QStringLiteral("—"));
     if (m_poseJointList) m_poseJointList->clear();
+    m_jointStats.clear();
 }
 
 void MainWindow::setSpinRpm(double rpm)
@@ -2200,6 +2238,25 @@ double angleAt(double ax, double ay, double bx, double by, double cx, double cy)
     return qRadiansToDegrees(std::acos(c));
 }
 
+// SkelRow keypoint slot order (matches kKpNames in loadSkeletonTrackFromFile):
+//   0 nose,        1 left_eye,   2 right_eye, 3 left_ear,   4 right_ear,
+//   5 left_shoulder, 6 right_shoulder,
+//   7 left_elbow,    8 right_elbow,
+//   9 left_wrist,   10 right_wrist,
+//  11 left_hip,     12 right_hip,
+//  13 left_knee,    14 right_knee,
+//  15 left_ankle,   16 right_ankle.
+struct AngleSpec { const char *label; int a, b, c; };
+const AngleSpec kAngleSpecs[] = {
+    { QT_TRANSLATE_NOOP("MainWindow", "Left elbow"),     5,  7,  9  },
+    { QT_TRANSLATE_NOOP("MainWindow", "Right elbow"),    6,  8,  10 },
+    { QT_TRANSLATE_NOOP("MainWindow", "Left shoulder"),  11, 5,  7  },
+    { QT_TRANSLATE_NOOP("MainWindow", "Right shoulder"), 12, 6,  8  },
+    { QT_TRANSLATE_NOOP("MainWindow", "Left knee"),      11, 13, 15 },
+    { QT_TRANSLATE_NOOP("MainWindow", "Right knee"),     12, 14, 16 },
+};
+constexpr float kJointVisFloor = 0.35f;
+
 }  // namespace
 
 void MainWindow::onLoadStats()
@@ -2222,116 +2279,114 @@ void MainWindow::onLoadStats()
 
 void MainWindow::loadJointAnglesFromCsv(const QString &csvPath)
 {
-    QFile file(csvPath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!loadSkeletonTrackFromFile(csvPath)) {
         QMessageBox::warning(this, tr("Load stats"),
-            tr("Cannot open CSV: %1").arg(csvPath));
+            tr("Could not load joint angles from %1.\n"
+               "See the subservice log for details.")
+                .arg(QFileInfo(csvPath).fileName()));
         return;
     }
-    QTextStream in(&file);
-    const QString header = in.readLine();
-    if (header.isEmpty()) {
-        QMessageBox::warning(this, tr("Load stats"),
-            tr("CSV is empty: %1").arg(csvPath));
-        return;
-    }
-    const QStringList cols = header.split(QLatin1Char(','));
-    QHash<QString, int> idx;
-    for (int i = 0; i < cols.size(); ++i) idx.insert(cols.at(i).trimmed(), i);
+    statusBar()->showMessage(tr("Loaded joint-angle stats from %1")
+                                 .arg(QFileInfo(csvPath).fileName()),
+                             5000);
+}
 
-    auto need = [&](const QString &c) {
-        if (!idx.contains(c)) {
-            throw std::runtime_error(("CSV missing column: " + c).toStdString());
-        }
-        return idx.value(c);
-    };
-
-    // For each priority joint we compute one angle from a triple of joints.
-    // (label, A, B, C) — angle is the angle at B in the triangle A-B-C.
-    struct AngleSpec { QString label, a, b, c; };
-    const QVector<AngleSpec> specs = {
-        {tr("Left elbow"),     "left_shoulder",  "left_elbow",     "left_wrist"},
-        {tr("Right elbow"),    "right_shoulder", "right_elbow",    "right_wrist"},
-        {tr("Left shoulder"),  "left_hip",       "left_shoulder",  "left_elbow"},
-        {tr("Right shoulder"), "right_hip",      "right_shoulder", "right_elbow"},
-        {tr("Left knee"),      "left_hip",       "left_knee",      "left_ankle"},
-        {tr("Right knee"),     "right_hip",      "right_knee",     "right_ankle"},
-    };
-
-    struct Cols { int ax, ay, av, bx, by, bv, cx, cy, cv; };
-    QVector<Cols> colsList;
-    colsList.reserve(specs.size());
-    try {
-        for (const auto &s : specs) {
-            colsList.append({
-                need(s.a + "_x"), need(s.a + "_y"), need(s.a + "_v"),
-                need(s.b + "_x"), need(s.b + "_y"), need(s.b + "_v"),
-                need(s.c + "_x"), need(s.c + "_y"), need(s.c + "_v"),
-            });
-        }
-    } catch (const std::exception &e) {
-        QMessageBox::warning(this, tr("Load stats"),
-            tr("This CSV doesn't look like a player_tracker output: %1")
-                .arg(QString::fromUtf8(e.what())));
-        return;
+void MainWindow::computeJointStatsFromSkelTrack()
+{
+    m_jointStats.clear();
+    constexpr int N = sizeof(kAngleSpecs) / sizeof(kAngleSpecs[0]);
+    m_jointStats.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        JointStats js;
+        js.label = tr(kAngleSpecs[i].label);
+        js.a = kAngleSpecs[i].a;
+        js.b = kAngleSpecs[i].b;
+        js.c = kAngleSpecs[i].c;
+        m_jointStats.push_back(js);
     }
 
-    const int hasPoseCol = idx.value("has_pose", -1);
-    constexpr float kVisFloor = 0.35f;
+    QVector<double> sum(N, 0.0);
+    QVector<int>    hits(N, 0);
+    QVector<double> mn(N,  std::numeric_limits<double>::max());
+    QVector<double> mx(N, -std::numeric_limits<double>::max());
 
-    QVector<int>    hits(specs.size(), 0);
-    QVector<double> sum(specs.size(), 0.0);
-    QVector<double> mn(specs.size(),  std::numeric_limits<double>::max());
-    QVector<double> mx(specs.size(), -std::numeric_limits<double>::max());
-
-    int totalRows = 0;
-    while (!in.atEnd()) {
-        const QString line = in.readLine();
-        if (line.isEmpty()) continue;
-        const QStringList cells = line.split(QLatin1Char(','));
-        if (cells.size() < cols.size()) continue;
-        ++totalRows;
-        if (hasPoseCol >= 0 && cells.value(hasPoseCol).toInt() == 0) continue;
-
-        for (int i = 0; i < specs.size(); ++i) {
-            const Cols &c = colsList[i];
-            const float va = cells.value(c.av).toFloat();
-            const float vb = cells.value(c.bv).toFloat();
-            const float vc = cells.value(c.cv).toFloat();
-            if (va < kVisFloor || vb < kVisFloor || vc < kVisFloor) continue;
+    for (const SkelRow &r : m_skelTrack) {
+        if (!r.hasPose) continue;
+        for (int i = 0; i < N; ++i) {
+            const int ai = kAngleSpecs[i].a;
+            const int bi = kAngleSpecs[i].b;
+            const int ci = kAngleSpecs[i].c;
+            if (r.kpV[ai] < kJointVisFloor
+             || r.kpV[bi] < kJointVisFloor
+             || r.kpV[ci] < kJointVisFloor) continue;
             const double ang = angleAt(
-                cells.value(c.ax).toDouble(), cells.value(c.ay).toDouble(),
-                cells.value(c.bx).toDouble(), cells.value(c.by).toDouble(),
-                cells.value(c.cx).toDouble(), cells.value(c.cy).toDouble());
+                r.kpX[ai], r.kpY[ai],
+                r.kpX[bi], r.kpY[bi],
+                r.kpX[ci], r.kpY[ci]);
             if (std::isnan(ang)) continue;
-            ++hits[i];
             sum[i] += ang;
+            ++hits[i];
             if (ang < mn[i]) mn[i] = ang;
             if (ang > mx[i]) mx[i] = ang;
         }
     }
-
-    if (m_poseJointList) m_poseJointList->clear();
-    for (int i = 0; i < specs.size(); ++i) {
-        QString text;
-        if (hits[i] == 0) {
-            text = QStringLiteral("%1: —").arg(specs[i].label);
-        } else {
-            const double mean = sum[i] / hits[i];
-            text = QStringLiteral("%1: mean %2°  [min %3° / max %4°]  (%5 frames)")
-                       .arg(specs[i].label)
-                       .arg(mean,   0, 'f', 1)
-                       .arg(mn[i],  0, 'f', 1)
-                       .arg(mx[i],  0, 'f', 1)
-                       .arg(hits[i]);
+    for (int i = 0; i < N; ++i) {
+        m_jointStats[i].hits = hits[i];
+        if (hits[i] > 0) {
+            m_jointStats[i].mean = sum[i] / hits[i];
+            m_jointStats[i].mn   = mn[i];
+            m_jointStats[i].mx   = mx[i];
         }
-        if (m_poseJointList) m_poseJointList->addItem(text);
     }
-    appendLog(tr("Joint angles computed from %1 (%2 rows).")
-                  .arg(QFileInfo(csvPath).fileName()).arg(totalRows));
-    statusBar()->showMessage(tr("Loaded joint-angle stats from %1")
-                                 .arg(QFileInfo(csvPath).fileName()),
-                             5000);
+
+    // Pre-create one list item per joint so the per-frame updater can
+    // edit text in place without flicker.
+    if (m_poseJointList) {
+        m_poseJointList->clear();
+        for (int i = 0; i < N; ++i) m_poseJointList->addItem(QString());
+    }
+    updatePoseAnglesForCurrentFrame();
+}
+
+void MainWindow::updatePoseAnglesForCurrentFrame()
+{
+    if (!m_poseJointList || m_jointStats.isEmpty()) return;
+
+    int rowIdx = -1;
+    if (!m_skelTrack.isEmpty()) {
+        rowIdx = findClosestSkelRow(m_positionSec * 1000.0);
+    }
+    const SkelRow *row = (rowIdx >= 0 && rowIdx < m_skelTrack.size())
+                             ? &m_skelTrack[rowIdx] : nullptr;
+
+    for (int i = 0; i < m_jointStats.size() && i < m_poseJointList->count(); ++i) {
+        const JointStats &js = m_jointStats[i];
+
+        QString live = QStringLiteral("—");
+        if (row && row->hasPose
+            && js.a >= 0 && js.b >= 0 && js.c >= 0
+            && row->kpV[js.a] >= kJointVisFloor
+            && row->kpV[js.b] >= kJointVisFloor
+            && row->kpV[js.c] >= kJointVisFloor) {
+            const double ang = angleAt(
+                row->kpX[js.a], row->kpY[js.a],
+                row->kpX[js.b], row->kpY[js.b],
+                row->kpX[js.c], row->kpY[js.c]);
+            if (!std::isnan(ang))
+                live = QStringLiteral("%1°").arg(ang, 0, 'f', 1);
+        }
+
+        QString agg;
+        if (js.hits > 0) {
+            agg = QStringLiteral("   [min %1° / mean %2° / max %3°  ·  n=%4]")
+                      .arg(js.mn,   0, 'f', 1)
+                      .arg(js.mean, 0, 'f', 1)
+                      .arg(js.mx,   0, 'f', 1)
+                      .arg(js.hits);
+        }
+        m_poseJointList->item(i)->setText(
+            QStringLiteral("%1: %2%3").arg(js.label, live, agg));
+    }
 }
 
 // ---------- Result overlays: file finders ----------
@@ -2587,7 +2642,9 @@ bool MainWindow::loadSkeletonTrackFromFile(const QString &csv)
     }
     appendLog(tr("Loaded skeleton track: %1 rows from %2")
                   .arg(m_skelTrack.size()).arg(QFileInfo(csv).fileName()));
-    return !m_skelTrack.isEmpty();
+    if (m_skelTrack.isEmpty()) return false;
+    computeJointStatsFromSkelTrack();
+    return true;
 }
 
 // ---------- Result overlays: row matching ----------
@@ -2901,8 +2958,8 @@ void MainWindow::onLoadTrackerResults()
             m_btnShowSkeleton->setChecked(true);
         }
         m_showSkeleton = true;
-        // Also populate the joint-angle stats panel from the same CSV.
-        loadJointAnglesFromCsv(chosenSkel);
+        // Joint-angle stats are populated automatically by
+        // loadSkeletonTrackFromFile() above.
     }
 
     if (anyLoaded) {

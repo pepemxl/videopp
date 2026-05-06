@@ -41,6 +41,9 @@ public:
     void setSpeed(double speed);
     double speed() const { return m_speed.load(); }
 
+    // Frames per second of the active source (0 if no source is open).
+    double fps() const { return m_fps.load(); }
+
     // Where to start the next run() (file sources only). 0 = beginning.
     void setStartPositionSec(double sec) { m_startSec.store(sec); }
     double currentPositionSec() const { return m_currentSec.load(); }
@@ -72,6 +75,7 @@ private:
     std::atomic<double> m_speed{1.0};
     std::atomic<double> m_startSec{0.0};
     std::atomic<double> m_currentSec{0.0};
+    std::atomic<double> m_fps{0.0};
     QMutex              m_pauseMutex;
     QWaitCondition      m_pauseCond;
 
