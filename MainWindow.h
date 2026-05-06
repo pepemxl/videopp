@@ -27,6 +27,28 @@ struct ShotMetadata
     QString hole;
 };
 
+// Per-frame disc-tracker result, parsed from the CSV for playback overlay.
+struct DiscRow
+{
+    int     frameIdx{-1};
+    double  timeMs{0.0};
+    float   cx{0}, cy{0};
+    float   bboxX{0}, bboxY{0}, bboxW{0}, bboxH{0};
+    QString source;   // detector | kalman_predict | anchor | lost
+};
+
+// Per-frame player_tracker result for playback overlay.
+struct SkelRow
+{
+    int     frameIdx{-1};
+    double  timeMs{0.0};
+    bool    hasPose{false};
+    float   bboxX{0}, bboxY{0}, bboxW{0}, bboxH{0};
+    float   kpX[17]{};
+    float   kpY[17]{};
+    float   kpV[17]{};
+};
+
 class QActionGroup;
 class QComboBox;
 class QLineEdit;
@@ -44,8 +66,14 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    enum class Theme { System = 0, Dark = 1, SolarizedLight = 2 };
+
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    static void  applyTheme(Theme theme);
+    static Theme loadSavedTheme();
+    static void  saveTheme(Theme theme);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -97,6 +125,12 @@ private slots:
     void onSubserviceStdout();
     void onSubserviceStderr();
     void onSubserviceFinished(int exitCode);
+    void onToggleDiscOverlay(bool checked);
+    void onToggleSkeletonOverlay(bool checked);
+    void onSwitchSourceOriginal();
+    void onSwitchSourceHighlight();
+    void onSwitchSourceZoom();
+    void onThemeSelected(QAction *act);
 
 private:
     void updatePlaybackControls();
@@ -147,6 +181,26 @@ private:
     // (left/right elbow, shoulder, knee), aggregate over frames, and
     // populate the existing Pose Joint Angles list with min/mean/max.
     void     loadJointAnglesFromCsv(const QString &csvPath);
+
+    // Result overlays — populate the per-frame caches from CSVs produced
+    // by the trackers. Returns true on success.
+    bool     loadDiscTrackForCurrentVideo();
+    bool     loadSkeletonTrackForCurrentVideo();
+    QString  findLatestDiscCsv() const;
+
+    // Most-recent highlighter / zoom mp4 for the current video — used by
+    // the Source switcher buttons.
+    QString  findLatestHighlightVideo() const;
+    QString  findLatestZoomVideo() const;
+
+    // Find the cached row whose time_ms is closest to the playback time.
+    // Returns -1 if no row is within 1.5 frame-times of the playback.
+    int      findClosestDiscRow(double playbackMs) const;
+    int      findClosestSkelRow(double playbackMs) const;
+
+    // Drawn from renderFrame after markers; image-pixel coordinates.
+    void     drawDiscOverlayOnPixmap(QPixmap &pix) const;
+    void     drawSkeletonOverlayOnPixmap(QPixmap &pix) const;
     void refreshMarkerFileList();
     void refreshMarkerList();
     int  selectedMarkerIndex() const;
@@ -204,6 +258,7 @@ private:
     QAction      *m_actRecord;
     QAction      *m_actShowMarkers;
     QActionGroup *m_filterGroup{nullptr};
+    QActionGroup *m_themeGroup{nullptr};
     QMenu        *m_recentMenu;
     QAction      *m_clearRecentAction;
 
@@ -242,6 +297,21 @@ private:
     QString         m_lastDiscCfg;
     QString         m_lastPlayerCfg;
     QString         m_lastHighlighterCfg;
+
+    // Result overlay state.
+    QPushButton    *m_btnShowDiscTrack{nullptr};
+    QPushButton    *m_btnShowSkeleton{nullptr};
+    QPushButton    *m_btnSrcOriginal{nullptr};
+    QPushButton    *m_btnSrcHighlight{nullptr};
+    QPushButton    *m_btnSrcZoom{nullptr};
+    QVector<DiscRow> m_discTrack;
+    QVector<SkelRow> m_skelTrack;
+    bool             m_showDiscTrack{false};
+    bool             m_showSkeleton{false};
+    QString          m_originalSourcePath;   // remembered when swapping source
+    bool             m_swappingSource{false}; // set true by source-switch slots
+                                              // so startFile() doesn't treat the
+                                              // swap as opening a new "original"
 };
 
 #endif

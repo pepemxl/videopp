@@ -36,6 +36,10 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QApplication>
+#include <QPalette>
+#include <QStyle>
+#include <QStyleFactory>
 #include <QTextStream>
 #include <QTime>
 #include <QVBoxLayout>
@@ -61,6 +65,13 @@ constexpr int    kSliderMaxMs     = 1'000'000'000;  // ~11.5 days, safe upper bo
 constexpr double kMarkerWindowSec = .5;             // visible for this long after placement
 const QString kRecentKey      = QStringLiteral("recentVideos");
 const QString kLastOpenDirKey = QStringLiteral("lastOpenDir");
+const QString kThemeKey       = QStringLiteral("theme");
+
+// Captured the first time applyTheme() runs, so "System" can restore whatever
+// QApplication was constructed with (e.g. windows11/windowsvista on Win11).
+QString g_defaultStyleName;
+QPalette g_defaultPalette;
+bool     g_defaultsCaptured = false;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -285,6 +296,27 @@ MainWindow::MainWindow(QWidget *parent)
     connect(actZoomIn,    &QAction::triggered, this, &MainWindow::onZoomIn);
     connect(actZoomOut,   &QAction::triggered, this, &MainWindow::onZoomOut);
     connect(actZoomReset, &QAction::triggered, this, &MainWindow::onResetZoom);
+
+    viewMenu->addSeparator();
+    QMenu *themeMenu = viewMenu->addMenu(tr("&Theme"));
+    m_themeGroup = new QActionGroup(this);
+    m_themeGroup->setExclusive(true);
+    struct ThemeEntry { Theme id; const char *label; };
+    const ThemeEntry kThemes[] = {
+        { Theme::System,         QT_TR_NOOP("&System Default") },
+        { Theme::Dark,           QT_TR_NOOP("&Dark") },
+        { Theme::SolarizedLight, QT_TR_NOOP("Solarized &Light") },
+    };
+    const Theme savedTheme = loadSavedTheme();
+    for (const auto &t : kThemes) {
+        QAction *act = themeMenu->addAction(tr(t.label));
+        act->setCheckable(true);
+        act->setData(int(t.id));
+        if (t.id == savedTheme) act->setChecked(true);
+        m_themeGroup->addAction(act);
+    }
+    connect(m_themeGroup, &QActionGroup::triggered,
+            this, &MainWindow::onThemeSelected);
 
     // ----- Markers menu -----
     QMenu *markersMenu = menuBar()->addMenu(tr("&Markers"));
@@ -511,6 +543,8 @@ void MainWindow::renderFrame()
 
     QPixmap pix = QPixmap::fromImage(m_currentFrame).scaled(
         target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (m_showDiscTrack)  drawDiscOverlayOnPixmap(pix);
+    if (m_showSkeleton)   drawSkeletonOverlayOnPixmap(pix);
     if (m_markersVisible) {
         drawMarkersOnPixmap(pix);
     }
@@ -560,6 +594,23 @@ void MainWindow::startFile(const QString &path, double startSec)
         m_markers.clear();
         refreshMarkerList();
         clearMetadataForm();
+    }
+    // If this is a user-initiated open (not a swap to a tracker output),
+    // remember the new file as the "original" and reset overlay state.
+    if (!m_swappingSource) {
+        m_originalSourcePath = path;
+        m_discTrack.clear();
+        m_skelTrack.clear();
+        if (m_btnShowDiscTrack && m_btnShowDiscTrack->isChecked()) {
+            QSignalBlocker b(m_btnShowDiscTrack);
+            m_btnShowDiscTrack->setChecked(false);
+        }
+        if (m_btnShowSkeleton && m_btnShowSkeleton->isChecked()) {
+            QSignalBlocker b(m_btnShowSkeleton);
+            m_btnShowSkeleton->setChecked(false);
+        }
+        m_showDiscTrack = false;
+        m_showSkeleton  = false;
     }
     m_processor->setSource(path, VideoProcessor::FromFile);
     m_processor->setStartPositionSec(startSec);
@@ -1363,6 +1414,51 @@ QWidget *MainWindow::buildRightSidebar()
     m_poseJointList->setSelectionMode(QAbstractItemView::NoSelection);
     pv->addWidget(m_poseJointList);
     vbox->addWidget(grpPose, 1);
+
+    // ---- Result Overlays ----
+    auto *grpOverlay = new QGroupBox(tr("Result Overlays"));
+    auto *ov = new QVBoxLayout(grpOverlay);
+
+    m_btnShowDiscTrack = new QPushButton(tr("Show disc trajectory"));
+    m_btnShowDiscTrack->setCheckable(true);
+    m_btnShowDiscTrack->setToolTip(
+        tr("Overlay the disc_tracker trajectory on playback.\n"
+           "Auto-loads the most recent CSV for the current video."));
+    m_btnShowSkeleton  = new QPushButton(tr("Show player skeleton"));
+    m_btnShowSkeleton->setCheckable(true);
+    m_btnShowSkeleton->setToolTip(
+        tr("Overlay the player_tracker skeleton on playback.\n"
+           "Auto-loads the most recent CSV for the current video."));
+    ov->addWidget(m_btnShowDiscTrack);
+    ov->addWidget(m_btnShowSkeleton);
+
+    auto *srcRow = new QHBoxLayout;
+    srcRow->setContentsMargins(0, 0, 0, 0);
+    m_btnSrcOriginal  = new QPushButton(tr("Original"));
+    m_btnSrcHighlight = new QPushButton(tr("Highlight"));
+    m_btnSrcZoom      = new QPushButton(tr("Zoom"));
+    m_btnSrcOriginal->setToolTip(tr("Switch playback back to the original video."));
+    m_btnSrcHighlight->setToolTip(
+        tr("Play the most recent player_highlighter overlay video for this video."));
+    m_btnSrcZoom->setToolTip(
+        tr("Play the most recent player_highlighter zoom track for this video."));
+    srcRow->addWidget(m_btnSrcOriginal);
+    srcRow->addWidget(m_btnSrcHighlight);
+    srcRow->addWidget(m_btnSrcZoom);
+    ov->addLayout(srcRow);
+
+    connect(m_btnShowDiscTrack, &QPushButton::toggled,
+            this, &MainWindow::onToggleDiscOverlay);
+    connect(m_btnShowSkeleton, &QPushButton::toggled,
+            this, &MainWindow::onToggleSkeletonOverlay);
+    connect(m_btnSrcOriginal,  &QPushButton::clicked,
+            this, &MainWindow::onSwitchSourceOriginal);
+    connect(m_btnSrcHighlight, &QPushButton::clicked,
+            this, &MainWindow::onSwitchSourceHighlight);
+    connect(m_btnSrcZoom,      &QPushButton::clicked,
+            this, &MainWindow::onSwitchSourceZoom);
+
+    vbox->addWidget(grpOverlay);
 
     buildSubservicesGroup(vbox);
 
@@ -2228,4 +2324,516 @@ void MainWindow::loadJointAnglesFromCsv(const QString &csvPath)
     statusBar()->showMessage(tr("Loaded joint-angle stats from %1")
                                  .arg(QFileInfo(csvPath).fileName()),
                              5000);
+}
+
+// ---------- Result overlays: file finders ----------
+
+namespace {
+
+// Walks up to 6 levels above applicationDirPath looking for a sub-tree
+// matching `subDir`, then returns the most-recent file matching any of
+// the glob filters. Empty string if not found.
+QString findLatestUnder(const QString &subDir, const QStringList &filters)
+{
+    QDir root(QCoreApplication::applicationDirPath());
+    for (int up = 0; up < 6; ++up) {
+        const QString dir = root.filePath(subDir);
+        QDir d(dir);
+        if (d.exists()) {
+            QFileInfoList files = d.entryInfoList(filters,
+                QDir::Files | QDir::NoDotAndDotDot, QDir::Time);
+            if (!files.isEmpty()) return files.first().absoluteFilePath();
+        }
+        if (!root.cdUp()) break;
+    }
+    return {};
+}
+
+}  // namespace
+
+QString MainWindow::findLatestDiscCsv() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    const QString stem = QFileInfo(m_lastSource).completeBaseName();
+    return findLatestUnder(QStringLiteral("disc_tracker/out"), {
+        stem + QStringLiteral("_*.csv"),
+        QStringLiteral("hole*_anchored_path_*.csv"),
+        QStringLiteral("*_anchored_path_*.csv"),
+        QStringLiteral("*_path_*.csv"),
+    });
+}
+
+QString MainWindow::findLatestHighlightVideo() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    const QString stem = QFileInfo(m_lastSource).completeBaseName();
+    return findLatestUnder(QStringLiteral("player_highlighter/out"), {
+        stem + QStringLiteral("_highlight_*.mp4"),
+        QStringLiteral("hole*_highlight_*.mp4"),
+        QStringLiteral("*_highlight_*.mp4"),
+    });
+}
+
+QString MainWindow::findLatestZoomVideo() const
+{
+    if (m_lastSource.isEmpty()) return {};
+    const QString stem = QFileInfo(m_lastSource).completeBaseName();
+    return findLatestUnder(QStringLiteral("player_highlighter/out"), {
+        stem + QStringLiteral("_zoom_*.mp4"),
+        QStringLiteral("hole*_zoom_*.mp4"),
+        QStringLiteral("*_zoom_*.mp4"),
+    });
+}
+
+// ---------- Result overlays: CSV loaders ----------
+
+bool MainWindow::loadDiscTrackForCurrentVideo()
+{
+    m_discTrack.clear();
+    const QString csv = findLatestDiscCsv();
+    if (csv.isEmpty()) {
+        appendLog(tr("No disc_tracker CSV found for the current video."));
+        return false;
+    }
+
+    QFile f(csv);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        appendLog(tr("Cannot open disc CSV: %1").arg(csv));
+        return false;
+    }
+    QTextStream in(&f);
+    const QString header = in.readLine();
+    const QStringList cols = header.split(QLatin1Char(','));
+    QHash<QString, int> idx;
+    for (int i = 0; i < cols.size(); ++i) idx.insert(cols.at(i).trimmed(), i);
+
+    auto col = [&](const QString &n, int fallback = -1) {
+        return idx.value(n, fallback);
+    };
+    const int cFrame = col("frame_idx");
+    const int cTime  = col("time_ms");
+    const int cBx    = col("x"),  cBy = col("y"), cBw = col("w"), cBh = col("h");
+    const int cCx    = col("cx"), cCy = col("cy");
+    const int cSrc   = col("source");
+    if (cFrame < 0 || cTime < 0 || cCx < 0 || cCy < 0) {
+        appendLog(tr("disc_tracker CSV missing required columns."));
+        return false;
+    }
+
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        if (line.isEmpty()) continue;
+        const QStringList c = line.split(QLatin1Char(','));
+        if (c.size() < cols.size()) continue;
+        DiscRow r;
+        r.frameIdx = c.value(cFrame).toInt();
+        r.timeMs   = c.value(cTime).toDouble();
+        r.cx       = c.value(cCx).toFloat();
+        r.cy       = c.value(cCy).toFloat();
+        if (cBx >= 0) r.bboxX = c.value(cBx).toFloat();
+        if (cBy >= 0) r.bboxY = c.value(cBy).toFloat();
+        if (cBw >= 0) r.bboxW = c.value(cBw).toFloat();
+        if (cBh >= 0) r.bboxH = c.value(cBh).toFloat();
+        if (cSrc >= 0) r.source = c.value(cSrc).trimmed();
+        m_discTrack.push_back(r);
+    }
+    appendLog(tr("Loaded disc track: %1 rows from %2")
+                  .arg(m_discTrack.size()).arg(QFileInfo(csv).fileName()));
+    return !m_discTrack.isEmpty();
+}
+
+bool MainWindow::loadSkeletonTrackForCurrentVideo()
+{
+    m_skelTrack.clear();
+    if (m_lastSource.isEmpty()) return false;
+    const QString csv = findLatestPlayerCsv();
+    if (csv.isEmpty()) {
+        appendLog(tr("No player_tracker CSV found for the current video."));
+        return false;
+    }
+
+    QFile f(csv);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        appendLog(tr("Cannot open player CSV: %1").arg(csv));
+        return false;
+    }
+    QTextStream in(&f);
+    const QString header = in.readLine();
+    const QStringList cols = header.split(QLatin1Char(','));
+    QHash<QString, int> idx;
+    for (int i = 0; i < cols.size(); ++i) idx.insert(cols.at(i).trimmed(), i);
+
+    static const char *kKpNames[17] = {
+        "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+        "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+        "left_wrist",    "right_wrist",
+        "left_hip",      "right_hip",
+        "left_knee",     "right_knee",
+        "left_ankle",    "right_ankle",
+    };
+
+    int cFrame = idx.value("frame_idx", -1);
+    int cTime  = idx.value("time_ms",   -1);
+    int cHas   = idx.value("has_pose",  -1);
+    int cBx    = idx.value("bbox_x",    -1);
+    int cBy    = idx.value("bbox_y",    -1);
+    int cBw    = idx.value("bbox_w",    -1);
+    int cBh    = idx.value("bbox_h",    -1);
+    if (cFrame < 0 || cTime < 0 || cHas < 0 || cBx < 0) {
+        appendLog(tr("player_tracker CSV missing required columns."));
+        return false;
+    }
+    int cKpX[17], cKpY[17], cKpV[17];
+    for (int i = 0; i < 17; ++i) {
+        cKpX[i] = idx.value(QString::fromLatin1(kKpNames[i]) + "_x", -1);
+        cKpY[i] = idx.value(QString::fromLatin1(kKpNames[i]) + "_y", -1);
+        cKpV[i] = idx.value(QString::fromLatin1(kKpNames[i]) + "_v", -1);
+        if (cKpX[i] < 0 || cKpY[i] < 0 || cKpV[i] < 0) {
+            appendLog(tr("player CSV missing keypoint columns for %1")
+                          .arg(QString::fromLatin1(kKpNames[i])));
+            return false;
+        }
+    }
+
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        if (line.isEmpty()) continue;
+        const QStringList c = line.split(QLatin1Char(','));
+        if (c.size() < cols.size()) continue;
+        SkelRow r;
+        r.frameIdx = c.value(cFrame).toInt();
+        r.timeMs   = c.value(cTime).toDouble();
+        r.hasPose  = (c.value(cHas).toInt() != 0);
+        r.bboxX    = c.value(cBx).toFloat();
+        r.bboxY    = c.value(cBy).toFloat();
+        r.bboxW    = c.value(cBw).toFloat();
+        r.bboxH    = c.value(cBh).toFloat();
+        for (int i = 0; i < 17; ++i) {
+            r.kpX[i] = c.value(cKpX[i]).toFloat();
+            r.kpY[i] = c.value(cKpY[i]).toFloat();
+            r.kpV[i] = c.value(cKpV[i]).toFloat();
+        }
+        m_skelTrack.push_back(r);
+    }
+    appendLog(tr("Loaded skeleton track: %1 rows from %2")
+                  .arg(m_skelTrack.size()).arg(QFileInfo(csv).fileName()));
+    return !m_skelTrack.isEmpty();
+}
+
+// ---------- Result overlays: row matching ----------
+
+namespace {
+
+// Generic closest-time lookup. Returns -1 if nothing within `tolMs`.
+template <typename Row>
+int closestRow(const QVector<Row> &rows, double playbackMs, double tolMs)
+{
+    if (rows.isEmpty()) return -1;
+    int   best = -1;
+    double bestDt = std::numeric_limits<double>::max();
+    // Linear scan — typical track length is <500 rows; binary search not worth it.
+    for (int i = 0; i < rows.size(); ++i) {
+        const double dt = std::abs(rows[i].timeMs - playbackMs);
+        if (dt < bestDt) { bestDt = dt; best = i; }
+    }
+    return (bestDt <= tolMs) ? best : -1;
+}
+
+}  // namespace
+
+int MainWindow::findClosestDiscRow(double playbackMs) const
+{
+    return closestRow(m_discTrack, playbackMs, /*tolMs=*/100.0);
+}
+
+int MainWindow::findClosestSkelRow(double playbackMs) const
+{
+    return closestRow(m_skelTrack, playbackMs, /*tolMs=*/100.0);
+}
+
+// ---------- Result overlays: drawing ----------
+
+void MainWindow::drawDiscOverlayOnPixmap(QPixmap &pix) const
+{
+    if (m_discTrack.isEmpty() || pix.isNull() || m_currentFrame.isNull()) return;
+    const double sx = double(pix.width())  / m_currentFrame.width();
+    const double sy = double(pix.height()) / m_currentFrame.height();
+
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    const double playbackMs = m_positionSec * 1000.0;
+    const int hereIdx = findClosestDiscRow(playbackMs);
+
+    // Trail: every row up to and including the current playback time.
+    QVector<QPointF> trail;
+    trail.reserve(m_discTrack.size());
+    for (const DiscRow &r : m_discTrack) {
+        if (r.timeMs > playbackMs + 1.0) break;
+        if (r.source == QLatin1String("lost")) continue;
+        trail.append(QPointF(r.cx * sx, r.cy * sy));
+    }
+    if (trail.size() >= 2) {
+        QPen pen(QColor(0, 200, 255, 220));
+        pen.setWidth(2);
+        p.setPen(pen);
+        for (int i = 1; i < trail.size(); ++i) p.drawLine(trail[i - 1], trail[i]);
+    }
+
+    // Current bbox + dot, color-coded by source.
+    if (hereIdx >= 0) {
+        const DiscRow &r = m_discTrack[hereIdx];
+        QColor c(0, 220, 60);                       // detector = green
+        if (r.source == QLatin1String("anchor"))         c = QColor(255, 200, 0);
+        else if (r.source == QLatin1String("kalman_predict")) c = QColor(0, 165, 255);
+        else if (r.source == QLatin1String("lost"))           c = QColor(180, 60, 60);
+
+        if (r.bboxW > 0 && r.bboxH > 0) {
+            QPen rp(c); rp.setWidth(2); p.setPen(rp);
+            p.drawRect(QRectF(r.bboxX * sx, r.bboxY * sy,
+                              r.bboxW * sx, r.bboxH * sy));
+        }
+        p.setBrush(c);
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(QPointF(r.cx * sx, r.cy * sy), 4.0, 4.0);
+    }
+    p.end();
+}
+
+void MainWindow::drawSkeletonOverlayOnPixmap(QPixmap &pix) const
+{
+    if (m_skelTrack.isEmpty() || pix.isNull() || m_currentFrame.isNull()) return;
+    const double playbackMs = m_positionSec * 1000.0;
+    const int hereIdx = findClosestSkelRow(playbackMs);
+    if (hereIdx < 0) return;
+    const SkelRow &r = m_skelTrack[hereIdx];
+    if (!r.hasPose) return;
+
+    const double sx = double(pix.width())  / m_currentFrame.width();
+    const double sy = double(pix.height()) / m_currentFrame.height();
+
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    // bbox
+    if (r.bboxW > 0 && r.bboxH > 0) {
+        QPen bp(QColor(60, 220, 60)); bp.setWidth(2); p.setPen(bp);
+        p.drawRect(QRectF(r.bboxX * sx, r.bboxY * sy,
+                          r.bboxW * sx, r.bboxH * sy));
+    }
+
+    // skeleton edges (COCO-17)
+    static const int kEdges[][2] = {
+        {5, 7}, {7, 9}, {6, 8}, {8, 10},        // arms
+        {5, 6}, {5, 11}, {6, 12}, {11, 12},     // shoulders/torso
+        {11, 13}, {13, 15}, {12, 14}, {14, 16}, // legs
+        {0, 1}, {0, 2}, {1, 3}, {2, 4},         // head
+    };
+    constexpr float kVisFloor = 0.35f;
+    QPen ep(QColor(180, 180, 60, 220)); ep.setWidth(2); p.setPen(ep);
+    for (const auto &e : kEdges) {
+        const int a = e[0], b = e[1];
+        if (r.kpV[a] < kVisFloor || r.kpV[b] < kVisFloor) continue;
+        p.drawLine(QPointF(r.kpX[a] * sx, r.kpY[a] * sy),
+                   QPointF(r.kpX[b] * sx, r.kpY[b] * sy));
+    }
+
+    // dots: priority joints highlighted; rest small.
+    static const int kPriority[] = {5, 6, 7, 8, 13, 14};
+    auto isPriority = [&](int kp) {
+        for (int q : kPriority) if (q == kp) return true;
+        return false;
+    };
+    for (int i = 0; i < 17; ++i) {
+        if (r.kpV[i] < kVisFloor) continue;
+        const QPointF c(r.kpX[i] * sx, r.kpY[i] * sy);
+        if (isPriority(i)) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 255));
+            p.drawEllipse(c, 5.0, 5.0);
+            QPen halo(QColor(255, 255, 255)); halo.setWidth(1);
+            p.setPen(halo); p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c, 7.0, 7.0);
+        } else {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(80, 200, 255, 220));
+            p.drawEllipse(c, 3.0, 3.0);
+        }
+    }
+    p.end();
+}
+
+// ---------- Result overlays: slots ----------
+
+void MainWindow::onToggleDiscOverlay(bool checked)
+{
+    if (checked) {
+        if (m_discTrack.isEmpty() && !loadDiscTrackForCurrentVideo()) {
+            QSignalBlocker b(m_btnShowDiscTrack);
+            m_btnShowDiscTrack->setChecked(false);
+            QMessageBox::information(this, tr("Result overlays"),
+                tr("No disc_tracker CSV found for this video.\n"
+                   "Run disc_tracker first."));
+            return;
+        }
+    }
+    m_showDiscTrack = checked;
+    renderFrame();
+}
+
+void MainWindow::onToggleSkeletonOverlay(bool checked)
+{
+    if (checked) {
+        if (m_skelTrack.isEmpty() && !loadSkeletonTrackForCurrentVideo()) {
+            QSignalBlocker b(m_btnShowSkeleton);
+            m_btnShowSkeleton->setChecked(false);
+            QMessageBox::information(this, tr("Result overlays"),
+                tr("No player_tracker CSV found for this video.\n"
+                   "Run player_tracker first."));
+            return;
+        }
+    }
+    m_showSkeleton = checked;
+    renderFrame();
+}
+
+void MainWindow::onSwitchSourceOriginal()
+{
+    if (m_originalSourcePath.isEmpty()) return;
+    if (m_originalSourcePath == m_lastSource) return;
+    m_swappingSource = true;
+    startFile(m_originalSourcePath);
+    m_swappingSource = false;
+    appendLog(tr("Switched playback to original: %1").arg(m_originalSourcePath));
+}
+
+void MainWindow::onSwitchSourceHighlight()
+{
+    if (m_originalSourcePath.isEmpty() && !m_lastSource.isEmpty())
+        m_originalSourcePath = m_lastSource;
+    const QString p = findLatestHighlightVideo();
+    if (p.isEmpty()) {
+        QMessageBox::information(this, tr("Result overlays"),
+            tr("No highlighter overlay video found for this video.\n"
+               "Run player_highlighter first."));
+        return;
+    }
+    m_swappingSource = true;
+    startFile(p);
+    m_swappingSource = false;
+    appendLog(tr("Switched playback to highlight: %1").arg(p));
+}
+
+void MainWindow::onSwitchSourceZoom()
+{
+    if (m_originalSourcePath.isEmpty() && !m_lastSource.isEmpty())
+        m_originalSourcePath = m_lastSource;
+    const QString p = findLatestZoomVideo();
+    if (p.isEmpty()) {
+        QMessageBox::information(this, tr("Result overlays"),
+            tr("No highlighter zoom video found for this video.\n"
+               "Run player_highlighter first."));
+        return;
+    }
+    m_swappingSource = true;
+    startFile(p);
+    m_swappingSource = false;
+    appendLog(tr("Switched playback to zoom: %1").arg(p));
+}
+
+void MainWindow::onThemeSelected(QAction *act)
+{
+    if (!act) return;
+    const Theme t = static_cast<Theme>(act->data().toInt());
+    applyTheme(t);
+    saveTheme(t);
+}
+
+MainWindow::Theme MainWindow::loadSavedTheme()
+{
+    QSettings s;
+    const int v = s.value(kThemeKey, int(Theme::System)).toInt();
+    if (v < int(Theme::System) || v > int(Theme::SolarizedLight))
+        return Theme::System;
+    return static_cast<Theme>(v);
+}
+
+void MainWindow::saveTheme(Theme theme)
+{
+    QSettings s;
+    s.setValue(kThemeKey, int(theme));
+}
+
+void MainWindow::applyTheme(Theme theme)
+{
+    auto *app = qobject_cast<QApplication *>(QCoreApplication::instance());
+    if (!app) return;
+
+    if (!g_defaultsCaptured) {
+        g_defaultStyleName  = app->style() ? app->style()->objectName() : QString();
+        g_defaultPalette    = app->palette();
+        g_defaultsCaptured  = true;
+    }
+
+    switch (theme) {
+    case Theme::System: {
+        if (!g_defaultStyleName.isEmpty()) {
+            if (auto *style = QStyleFactory::create(g_defaultStyleName))
+                app->setStyle(style);
+        }
+        app->setStyleSheet(QString());
+        app->setPalette(g_defaultPalette);
+        break;
+    }
+    case Theme::Dark: {
+        if (auto *style = QStyleFactory::create(QStringLiteral("Fusion")))
+            app->setStyle(style);
+        QPalette p;
+        p.setColor(QPalette::Window,          QColor(53, 53, 53));
+        p.setColor(QPalette::WindowText,      Qt::white);
+        p.setColor(QPalette::Base,            QColor(35, 35, 35));
+        p.setColor(QPalette::AlternateBase,   QColor(53, 53, 53));
+        p.setColor(QPalette::ToolTipBase,     QColor(53, 53, 53));
+        p.setColor(QPalette::ToolTipText,     Qt::white);
+        p.setColor(QPalette::Text,            Qt::white);
+        p.setColor(QPalette::Button,          QColor(53, 53, 53));
+        p.setColor(QPalette::ButtonText,      Qt::white);
+        p.setColor(QPalette::BrightText,      Qt::red);
+        p.setColor(QPalette::Link,            QColor(42, 130, 218));
+        p.setColor(QPalette::Highlight,       QColor(42, 130, 218));
+        p.setColor(QPalette::HighlightedText, Qt::black);
+        p.setColor(QPalette::Disabled, QPalette::Text,       QColor(127, 127, 127));
+        p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(127, 127, 127));
+        p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(127, 127, 127));
+        app->setPalette(p);
+        app->setStyleSheet(QStringLiteral(
+            "QToolTip { color: #ffffff; background-color: #2a82da; "
+            "border: 1px solid white; }"));
+        break;
+    }
+    case Theme::SolarizedLight: {
+        if (auto *style = QStyleFactory::create(QStringLiteral("Fusion")))
+            app->setStyle(style);
+        QPalette p;
+        p.setColor(QPalette::Window,          QColor(0xee, 0xe8, 0xd5));
+        p.setColor(QPalette::WindowText,      QColor(0x58, 0x6e, 0x75));
+        p.setColor(QPalette::Base,            QColor(0xfd, 0xf6, 0xe3));
+        p.setColor(QPalette::AlternateBase,   QColor(0xee, 0xe8, 0xd5));
+        p.setColor(QPalette::ToolTipBase,     QColor(0xfd, 0xf6, 0xe3));
+        p.setColor(QPalette::ToolTipText,     QColor(0x58, 0x6e, 0x75));
+        p.setColor(QPalette::Text,            QColor(0x58, 0x6e, 0x75));
+        p.setColor(QPalette::Button,          QColor(0xee, 0xe8, 0xd5));
+        p.setColor(QPalette::ButtonText,      QColor(0x58, 0x6e, 0x75));
+        p.setColor(QPalette::BrightText,      QColor(0xdc, 0x32, 0x2f));
+        p.setColor(QPalette::Link,            QColor(0x26, 0x8b, 0xd2));
+        p.setColor(QPalette::Highlight,       QColor(0xb5, 0x89, 0x00));
+        p.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
+        p.setColor(QPalette::Disabled, QPalette::Text,       QColor(0x93, 0xa1, 0xa1));
+        p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x93, 0xa1, 0xa1));
+        p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x93, 0xa1, 0xa1));
+        app->setPalette(p);
+        app->setStyleSheet(QString());
+        break;
+    }
+    }
 }
